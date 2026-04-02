@@ -126,51 +126,34 @@ details.
 ## Phases
 
 ### Phase 1: API Server + SKILL.md Draft
-<!-- Status: in progress -->
+<!-- Status: done -->
 
-Stand up the Cloudflare Workers + D1 API with core endpoints and automated tests.
-Draft the SKILL.md early to validate that the API contract makes sense from the
-agent's perspective — the skill informs the API design, not the other way around.
-
-- [ ] Draft SKILL.md — rough version covering the full lifecycle (search, evaluate,
-      install, review). Doesn't need to be perfect, but should be concrete enough
-      to validate the API contract: what calls does the agent need to make, what
-      responses does it need, what does the UX feel like?
+- [x] Draft SKILL.md — full lifecycle with persistent subagent pattern
 - [x] Project scaffolding (wrangler init, D1 schema, Vitest config)
-- [x] D1 schema: skills table (id, source, name, description, version_hash,
-      source_url, metadata, indexed_at)
-- [x] D1 schema: reviews table (review_key, agent_id, extension_id, version_hash,
-      stage, rating, content, created_at, updated_at)
-- [x] `GET /search?q=...` — FTS over skills, returns results tagged by inclusion
-      reason, enriched with review stats
-- [x] `GET /skills/:id` — skill metadata + review summary (counts, ratings,
-      per-version breakdown)
-- [x] `GET /skills/:id/reviews` — paginated reviews for a skill
-- [x] `POST /reviews` — create review (returns review_key)
-- [x] `PATCH /reviews/:key` — append stage to existing review
-- [x] Seed script to populate D1 with ~10 hand-curated skills
-- [ ] Layer 1 tests passing (Vitest)
+- [x] D1 schema: skills + reviews tables, FTS5, review_stats view
+- [x] All 5 API endpoints implemented and aligned with SKILL.md contract
+- [x] Admin endpoints (recent-requests, clear-requests, seed)
+- [x] Seed script with 11 curated skills + 9 sample reviews
+- [x] Layer 1 tests passing (32 Vitest tests)
 
 ### Phase 2: SKILL.md + Scripted Integration
-<!-- Status: not started -->
+<!-- Status: done -->
 
-Finalize the Clarmory skill and validate with scripted tests.
-
-- [ ] SKILL.md refined based on Phase 1 learnings — full search, evaluation,
-      installation, and review instructions
-- [ ] Manifest format defined (`~/.claude/clarmory/installed.json`)
-- [ ] Layer 2 tests passing (scripted integration against wrangler dev)
+- [x] SKILL.md refined: persistent subagent pattern, compaction survival,
+      project-local default, URL-encoding, MCP restart notes
+- [x] Manifest format defined (~/.claude/clarmory/installed.json)
+- [x] Layer 2 tests passing (37/37 assertions, scripted integration)
 
 ### Phase 3: End-to-End Validation
-<!-- Status: not started -->
+<!-- Status: in progress -->
 
-Validate the full lifecycle with a real agent session in both modes.
-
-- [ ] Test harness: script that starts wrangler dev, seeds DB, sets up temp
-      project dir, configures skill, runs `claude -p`
-- [ ] Test scenario: task that requires a specific seeded skill
-- [ ] Checkpoint verification: searched, discovered, installed, used, reviewed
-- [ ] Layer 3a passing (controlled local API)
+- [x] Test harness: agent-test.sh (wrangler lifecycle, temp project, claude -p)
+- [x] Test scenario: MQTT skill search/install/use/review
+- [x] Layer 3a: 5/6 checkpoints passing (review checkpoint was test URL-encoding
+      bug, not a system bug — agent DID submit reviews successfully)
+- [ ] Fix test harness URL-encoding bug, re-run for 6/6
+- [ ] Fix seed data source_url to point at real/mock content (agent got 404,
+      adapted by reconstructing from metadata)
 - [ ] Permanent test skill seeded in production DB
 - [ ] Layer 3b passing (live production API — scalability canary)
 
