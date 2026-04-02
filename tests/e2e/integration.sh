@@ -337,6 +337,73 @@ STATUS=$(echo "$RESPONSE" | head -n1)
 assert_status "404" "$STATUS" "GET /skills/:id returns 404 for unknown ID"
 
 # -------------------------------------------------------
+# Test 2b: Skill content endpoint
+# -------------------------------------------------------
+echo ""
+echo "--- 2b. Skill Content ---"
+
+MQTT_SKILL_ENC=$(urlencode "github:claudecode-contrib/mqtt-client-skill")
+
+# MQTT skill has inline content — should return markdown
+RESPONSE=$(http_get "$API_URL/skills/$MQTT_SKILL_ENC/content")
+STATUS=$(echo "$RESPONSE" | head -n1)
+BODY=$(echo "$RESPONSE" | tail -n +2)
+
+assert_status "200" "$STATUS" "GET /skills/:id/content returns 200 for skill with content"
+
+# Verify it returns actual markdown content (should contain MQTT keywords)
+HAS_CONTENT=$(echo "$BODY" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    content = d.get('content', '')
+    print('yes' if 'mqtt' in content.lower() or 'MQTT' in content else 'no')
+except:
+    # Might be plain text
+    text = sys.stdin.read() if not content else content
+    print('yes' if 'mqtt' in text.lower() else 'no')
+" 2>/dev/null || echo "no")
+
+if [ "$HAS_CONTENT" = "yes" ]; then
+  pass "Content endpoint returns MQTT skill content"
+else
+  fail "Content endpoint returned no MQTT-related content"
+fi
+
+# Skill without inline content — should return 404 with source_url hint
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC/content")
+STATUS=$(echo "$RESPONSE" | head -n1)
+BODY=$(echo "$RESPONSE" | tail -n +2)
+
+assert_status "404" "$STATUS" "GET /skills/:id/content returns 404 for skill without inline content"
+
+# 404 for nonexistent skill content
+RESPONSE=$(http_get "$API_URL/skills/nonexistent-skill-id/content")
+STATUS=$(echo "$RESPONSE" | head -n1)
+assert_status "404" "$STATUS" "GET /skills/:id/content returns 404 for unknown skill"
+
+# -------------------------------------------------------
+# Test 2c: Search edge cases
+# -------------------------------------------------------
+echo ""
+echo "--- 2c. Search Edge Cases ---"
+
+# Empty query should return 400
+RESPONSE=$(http_get "$API_URL/search?q=")
+STATUS=$(echo "$RESPONSE" | head -n1)
+assert_status "400" "$STATUS" "GET /search with empty q returns 400"
+
+# Missing q parameter should return 400
+RESPONSE=$(http_get "$API_URL/search")
+STATUS=$(echo "$RESPONSE" | head -n1)
+assert_status "400" "$STATUS" "GET /search without q returns 400"
+
+# Special characters in query should not cause errors
+RESPONSE=$(http_get "$API_URL/search?q=test%20%26%20deploy")
+STATUS=$(echo "$RESPONSE" | head -n1)
+assert_status "200" "$STATUS" "GET /search with special chars returns 200"
+
+# -------------------------------------------------------
 # Test 3: Get reviews for a skill (initially may be empty)
 # -------------------------------------------------------
 echo ""
@@ -632,6 +699,52 @@ if [ "$FOUND_OUR_REVIEW" = "yes" ]; then
   pass "Our review ($REVIEW_KEY) appears in the reviews list"
 else
   fail "Our review ($REVIEW_KEY) not found in reviews list"
+fi
+
+# -------------------------------------------------------
+# Test 11: Version-filtered reviews
+# -------------------------------------------------------
+echo ""
+echo "--- 11. Version-Filtered Reviews ---"
+
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC/reviews?version=$VERSION_HASH")
+STATUS=$(echo "$RESPONSE" | head -n1)
+BODY=$(echo "$RESPONSE" | tail -n +2)
+
+assert_status "200" "$STATUS" "GET /skills/:id/reviews?version=HASH returns 200"
+
+# All returned reviews should match the version hash
+WRONG_VERSION=$(echo "$BODY" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+reviews = d.get('reviews', [])
+wrong = [r for r in reviews if r.get('version_hash') != '$VERSION_HASH']
+print(len(wrong))
+" 2>/dev/null || echo "0")
+
+if [ "$WRONG_VERSION" = "0" ]; then
+  pass "Version filter returns only matching reviews"
+else
+  fail "Version filter returned $WRONG_VERSION reviews with wrong version"
+fi
+
+# Nonexistent version should return empty list, not error
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC/reviews?version=nonexistent999")
+STATUS=$(echo "$RESPONSE" | head -n1)
+BODY=$(echo "$RESPONSE" | tail -n +2)
+
+assert_status "200" "$STATUS" "Version filter with unknown hash returns 200"
+
+EMPTY_COUNT=$(echo "$BODY" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(len(d.get('reviews', [])))
+" 2>/dev/null || echo "999")
+
+if [ "$EMPTY_COUNT" = "0" ]; then
+  pass "Unknown version hash returns empty reviews list"
+else
+  fail "Unknown version hash returned $EMPTY_COUNT reviews (expected 0)"
 fi
 
 # -------------------------------------------------------

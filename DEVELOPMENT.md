@@ -41,6 +41,11 @@ npx wrangler dev            # Starts Workers + D1 locally on :8787
 # Deploy
 cd api/
 npx wrangler deploy         # Push to Cloudflare
+
+# Secrets (set once per environment, not in wrangler.toml for production)
+cd api/
+npx wrangler secret put ADMIN_SECRET       # Required: protects /admin/* endpoints
+npx wrangler secret put GITHUB_CLIENT_SECRET  # Required: GitHub OAuth token exchange
 ```
 
 ## API Routes

@@ -5,6 +5,7 @@ export interface Env {
   DB: D1Database;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  ADMIN_SECRET: string;
 }
 
 type RouteHandler = (
@@ -511,13 +512,14 @@ const searchSkills: RouteHandler = async (request, env) => {
     ? installTypes[typeFilter]
     : [];
 
-  // Most-relevant: FTS rank
+  // Most-relevant: weighted BM25 (name=10, description=1, tags=5)
   const relevantQuery = `
-    SELECT s.*, 'most-relevant' AS inclusion_reason
+    SELECT s.*, 'most-relevant' AS inclusion_reason,
+           bm25(skills_fts, 10.0, 1.0, 5.0) AS relevance
     FROM skills_fts fts
     JOIN skills s ON s.rowid = fts.rowid
     WHERE skills_fts MATCH ? ${typeClause}
-    ORDER BY rank
+    ORDER BY relevance
     LIMIT ?
   `;
 
@@ -759,6 +761,7 @@ const createReview: RouteHandler = async (request, env) => {
   const rating = body.rating as number | undefined;
   const qualityRating = body.quality_rating as number | undefined;
   const securityFlag = body.security_ok === false || body.security_flag === true;
+  const model = (body.model as string | undefined) || null;
 
   if (!agentId || !skillId) {
     return json(
@@ -804,8 +807,8 @@ const createReview: RouteHandler = async (request, env) => {
   const effectiveRating = rating ?? qualityRating ?? null;
 
   await env.DB.prepare(`
-    INSERT INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag, trust_level, public_key)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag, trust_level, public_key, model)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       reviewKey,
@@ -816,11 +819,12 @@ const createReview: RouteHandler = async (request, env) => {
       effectiveRating,
       securityFlag ? 1 : 0,
       auth.trustLevel,
-      auth.publicKey
+      auth.publicKey,
+      model
     )
     .run();
 
-  return json({ review_key: reviewKey, created: true, trust_level: auth.trustLevel }, 201);
+  return json({ review_key: reviewKey, created: true, trust_level: auth.trustLevel, model }, 201);
 };
 
 const updateReview: RouteHandler = async (request, env, params) => {
@@ -923,6 +927,13 @@ export default {
     const url = new URL(request.url);
     const query = Object.fromEntries(url.searchParams.entries());
 
+    // Admin endpoints require X-Admin-Secret header
+    if (url.pathname.startsWith("/admin/")) {
+      if (request.headers.get("x-admin-secret") !== env.ADMIN_SECRET) {
+        return json({ error: "Forbidden" }, 403);
+      }
+    }
+
     // Admin: recent requests log
     if (url.pathname === "/admin/recent-requests") {
       const limit = Math.min(
@@ -978,8 +989,8 @@ export default {
           statements: stmts.length,
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        return json({ seeded: false, error: message }, 500);
+        console.error(err);
+        return json({ seeded: false, error: "Internal server error" }, 500);
       }
     }
 
@@ -992,8 +1003,8 @@ export default {
         return response;
       } catch (err) {
         logRequest(request.method, url.pathname, query, 500);
-        const message = err instanceof Error ? err.message : "Unknown error";
-        return json({ error: message }, 500);
+        console.error(err);
+        return json({ error: "Internal server error" }, 500);
       }
     }
 

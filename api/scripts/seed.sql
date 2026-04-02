@@ -12,7 +12,7 @@
 -- =============================================================================
 
 -- E2E test target: MQTT skill with inline content (agent fetches via GET /skills/:id/content)
-INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, content, metadata) VALUES
+INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, content, tags, metadata) VALUES
 ('github:claudecode-contrib/mqtt-client-skill',
  'awesome-claude-code', 'MQTT Client',
  'MQTT publish/subscribe skill for IoT projects. Sets up an MQTT client that connects to a broker, subscribes to topics, publishes messages, and logs incoming data. Handles reconnection, QoS levels, and topic wildcards. Works with Mosquitto, HiveMQ, EMQX, and other standard brokers.',
@@ -166,40 +166,46 @@ client.on("message", (topic, message) => {
 });
 ```
 ',
+ 'mqtt iot messaging pubsub subscribe broker',
  '{"tags": ["mqtt", "iot", "messaging", "pubsub", "subscribe", "broker"], "author": "claudecode-contrib"}');
 
 -- Remaining skills (no inline content — fetched from upstream source_url)
-INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, metadata) VALUES
+INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, tags, metadata) VALUES
 
 -- Skills (SKILL.md files)
 ('github:trailofbits/skills/security-audit',
  'github', 'Trail of Bits Security Audit',
  'Security-focused code auditing skill from Trail of Bits. Performs systematic vulnerability analysis including injection flaws, auth issues, cryptographic weaknesses, and dependency risks. Produces structured findings with severity ratings.',
  'a1b2c3d4', 'https://github.com/trailofbits/skills', 'skill',
+ 'security audit vulnerability code-review',
  '{"tags": ["security", "audit", "vulnerability"], "author": "Trail of Bits"}'),
 
 ('github:OthmanAdi/planning-with-files',
  'github', 'Planning with Files',
  'Manus-style persistent markdown planning skill. Maintains a structured plan file that evolves as the agent works, tracking phases, decisions, and progress. Prevents scope drift and provides continuity across sessions.',
  'e5f6a7b8', 'https://github.com/OthmanAdi/planning-with-files', 'skill',
+ 'planning workflow project-management',
  '{"tags": ["planning", "workflow", "project-management"], "author": "OthmanAdi"}'),
 
 ('github:Lum1104/Understand-Anything',
  'github', 'Understand Anything',
  'Turns any codebase into an interactive knowledge graph. Indexes code structure, dependencies, and relationships, then enables natural language exploration and search. Useful for onboarding to unfamiliar projects.',
  'c9d0e1f2', 'https://github.com/Lum1104/Understand-Anything', 'skill',
+ 'code-analysis knowledge-graph onboarding',
  '{"tags": ["code-analysis", "knowledge-graph", "onboarding"], "author": "Lum1104"}'),
 
 ('github:FlineDev/ContextKit',
  'github', 'ContextKit',
  'Proactive development partner with 4-phase planning: understand, plan, implement, verify. Generates rich project context including dependency maps, API surfaces, and test coverage analysis before making changes.',
  'a3b4c5d6', 'https://github.com/FlineDev/ContextKit', 'skill',
+ 'planning context development-workflow',
  '{"tags": ["planning", "context", "development-workflow"], "author": "FlineDev"}'),
 
 ('github:akin-ozer/cc-devops-skills',
  'github', 'DevOps Skills',
  'Infrastructure-as-code generation skills for Terraform, Kubernetes, Docker, and CI/CD pipelines. Handles cloud provisioning, container orchestration, and deployment automation with best-practice templates.',
  'f7e8d9c0', 'https://github.com/akin-ozer/cc-devops-skills', 'skill',
+ 'devops terraform kubernetes docker ci-cd infrastructure',
  '{"tags": ["devops", "terraform", "kubernetes", "docker", "ci-cd"], "author": "akin-ozer"}'),
 
 -- Local MCP servers (run on user's machine)
@@ -207,18 +213,21 @@ INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, sour
  'mcp-registry', 'MCP Filesystem Server',
  'Reference MCP server providing sandboxed filesystem access. Allows agents to read, write, search, and manage files within configured directories. Supports glob patterns, file metadata, and directory listing.',
  'b1c2d3e4', 'https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem', 'mcp-local',
+ 'filesystem mcp reference file-access',
  '{"tags": ["filesystem", "mcp", "reference"], "author": "Anthropic", "runtime": "node"}'),
 
 ('github:modelcontextprotocol/servers/postgres',
  'mcp-registry', 'MCP PostgreSQL Server',
  'MCP server for PostgreSQL database interaction. Provides read-only SQL query execution, schema introspection, table listing, and query explanation. Connects to any PostgreSQL instance via connection string.',
  'd5e6f7a8', 'https://github.com/modelcontextprotocol/servers/tree/main/src/postgres', 'mcp-local',
+ 'database postgresql sql mcp',
  '{"tags": ["database", "postgresql", "sql", "mcp"], "author": "Anthropic", "runtime": "node"}'),
 
 ('github:upstash/context7-mcp',
  'mcp-registry', 'Context7 MCP',
  'Retrieves up-to-date, version-specific documentation and code examples for libraries and frameworks directly from source. Replaces stale training data with live docs. Supports thousands of libraries.',
  'e9f0a1b2', 'https://github.com/upstash/context7-mcp', 'mcp-hosted',
+ 'documentation libraries mcp context',
  '{"tags": ["documentation", "libraries", "mcp", "context"], "author": "Upstash", "runtime": "remote"}'),
 
 -- Hosted MCP servers (remote, opaque version)
@@ -226,12 +235,14 @@ INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, sour
  'mcp-registry', 'Claude Code as MCP Server',
  'Runs Claude Code itself as an MCP server, enabling other AI tools and agents to leverage Claude Code capabilities. Provides tools for code analysis, editing, and bash execution through the MCP protocol.',
  NULL, 'https://github.com/anthropics/claude-code', 'mcp-local',
+ 'meta mcp agent-orchestration',
  '{"tags": ["meta", "mcp", "agent-orchestration"], "author": "Anthropic", "runtime": "node", "version_opaque": true}'),
 
 ('github:K-Dense-AI/claude-scientific-skills',
  'github', 'Scientific Research Skills',
  'Collection of skills for scientific workflows: literature review, experimental design, data analysis, statistical testing, and paper writing. Includes domain-specific templates for biology, chemistry, physics, and engineering.',
  'c3d4e5f6', 'https://github.com/K-Dense-AI/claude-scientific-skills', 'skill',
+ 'science research data-analysis academic',
  '{"tags": ["science", "research", "data-analysis", "academic"], "author": "K-Dense-AI"}');
 
 -- =============================================================================

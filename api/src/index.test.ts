@@ -394,6 +394,41 @@ describe("POST /reviews", () => {
     expect(body.review_key).toMatch(/^rv_/);
   });
 
+  it("stores and returns model field when provided", async () => {
+    const { status, body } = await signedRequest("/reviews", {
+      agent_id: "test-agent-model",
+      skill_id: "github:trailofbits/skills/security-audit",
+      stage: "code_review",
+      summary: "Reviewed by opus",
+      model: "claude-opus-4-6",
+    });
+    expect(status).toBe(201);
+    expect(body.model).toBe("claude-opus-4-6");
+
+    // Verify it's persisted and returned in reviews list
+    const { body: reviewsBody } = await jsonResponse<{
+      reviews: Array<{ review_key: string; model: string | null }>;
+    }>(
+      `/skills/${encodeURIComponent("github:trailofbits/skills/security-audit")}/reviews`
+    );
+    const review = reviewsBody.reviews.find(
+      (r) => r.review_key === body.review_key
+    );
+    expect(review).toBeDefined();
+    expect(review!.model).toBe("claude-opus-4-6");
+  });
+
+  it("accepts review without model field (null)", async () => {
+    const { status, body } = await signedRequest("/reviews", {
+      agent_id: "test-agent-no-model",
+      skill_id: "github:trailofbits/skills/security-audit",
+      stage: "code_review",
+      summary: "No model specified",
+    });
+    expect(status).toBe(201);
+    expect(body.model).toBeNull();
+  });
+
   it("returns 400 without required fields", async () => {
     const { status } = await signedRequest("/reviews", {});
     expect(status).toBe(400);
@@ -690,6 +725,24 @@ describe("signature auth", () => {
   });
 });
 
+// --- Admin: auth guard ---
+
+const adminHeaders = { "X-Admin-Secret": "test-admin-secret-not-for-production" };
+
+describe("admin auth", () => {
+  it("returns 403 without admin secret", async () => {
+    const { status } = await jsonResponse("/admin/recent-requests");
+    expect(status).toBe(403);
+  });
+
+  it("returns 403 with wrong admin secret", async () => {
+    const { status } = await jsonResponse("/admin/recent-requests", {
+      headers: { "X-Admin-Secret": "wrong-secret" },
+    });
+    expect(status).toBe(403);
+  });
+});
+
 // --- Admin: request log ---
 
 describe("GET /admin/recent-requests", () => {
@@ -707,7 +760,7 @@ describe("GET /admin/recent-requests", () => {
         timestamp: string;
         status: number;
       }>;
-    }>("/admin/recent-requests");
+    }>("/admin/recent-requests", { headers: adminHeaders });
 
     expect(status).toBe(200);
     expect(body.count).toBeGreaterThan(0);
@@ -724,7 +777,7 @@ describe("GET /admin/recent-requests", () => {
     const { body } = await jsonResponse<{
       count: number;
       requests: Array<{ method: string; path: string }>;
-    }>("/admin/recent-requests?method=GET&path=/search");
+    }>("/admin/recent-requests?method=GET&path=/search", { headers: adminHeaders });
 
     for (const req of body.requests) {
       expect(req.method).toBe("GET");
@@ -733,9 +786,9 @@ describe("GET /admin/recent-requests", () => {
   });
 
   it("clears the log", async () => {
-    await callWorker("/admin/clear-requests", { method: "POST" });
+    await callWorker("/admin/clear-requests", { method: "POST", headers: adminHeaders });
     const { body } = await jsonResponse<{ count: number }>(
-      "/admin/recent-requests"
+      "/admin/recent-requests", { headers: adminHeaders }
     );
     expect(body.count).toBe(0);
   });
@@ -748,7 +801,7 @@ describe("POST /admin/seed", () => {
     const { status, body } = await jsonResponse<{
       seeded: boolean;
       statements: number;
-    }>("/admin/seed", { method: "POST" });
+    }>("/admin/seed", { method: "POST", headers: adminHeaders });
 
     expect(status).toBe(200);
     expect(body.seeded).toBe(true);

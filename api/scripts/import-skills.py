@@ -4,6 +4,10 @@
 Sources:
   1. awesome-claude-code (hesreallyhim/awesome-claude-code) — curated README
   2. GitHub code search — repos containing SKILL.md files
+  3. GitHub search — Claude Code skills (various search terms)
+  4. GitHub search — MCP servers (mcp-server, modelcontextprotocol)
+  5. GitHub search — APM packages (apm.yml files)
+  6. Other awesome-claude lists on GitHub
 
 Usage:
   python3 scripts/import-skills.py                        # dry run
@@ -147,15 +151,23 @@ def infer_tags(name: str, description: str) -> list[str]:
         "testing": ["testing", "test", "tdd", "bdd", "qa"],
         "code-review": ["code review", "code-review", "lint", "analysis"],
         "git": ["git", "version control", "pr ", "pull request"],
-        "mcp": ["mcp", "model context protocol"],
+        "mcp": ["mcp", "model context protocol", "mcp-server", "mcp server"],
         "research": ["research", "scientific", "academic"],
         "documentation": ["documentation", "docs", "readme"],
-        "database": ["database", "sql", "postgres", "sqlite"],
+        "database": ["database", "sql", "postgres", "sqlite", "supabase", "prisma"],
         "agent": ["agent", "orchestrat", "swarm", "multi-agent"],
         "hooks": ["hook"],
         "commands": ["command", "slash-command", "slash command"],
         "framework": ["framework", "kit", "toolkit"],
         "monitoring": ["monitor", "usage", "analytics", "dashboard"],
+        "web": ["web", "http", "api ", "rest", "graphql", "browser"],
+        "ai": ["ai ", "llm", "openai", "anthropic", "claude", "gpt", "embedding"],
+        "file-management": ["file", "filesystem", "storage", "s3", "blob"],
+        "communication": ["slack", "discord", "email", "notification", "chat", "messaging"],
+        "search": ["search", "index", "retrieval", "rag"],
+        "cloud": ["aws", "gcp", "azure", "cloudflare", "vercel", "netlify"],
+        "data": ["data", "csv", "json", "xml", "parser", "transform"],
+        "apm": ["apm", "application performance", "observability", "tracing"],
     }
     tags = []
     for tag, patterns in keywords.items():
@@ -189,6 +201,119 @@ def search_github_skillmd() -> list[dict]:
     return repos
 
 
+def search_github_repos(query: str, limit: int = 50) -> list[dict]:
+    """Search GitHub repos by query string. Returns list of {repo, description}."""
+    try:
+        result = subprocess.run(
+            ["gh", "search", "repos", query, "--limit", str(limit),
+             "--json", "fullName,description"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return []
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError):
+        return []
+
+
+def search_github_claude_skills() -> list[dict]:
+    """Search GitHub for Claude Code skill repos using various search terms."""
+    search_terms = [
+        "claude code skill",
+        "claude-code plugin",
+        "claude code extension",
+        "claude code SKILL.md",
+    ]
+    seen = set()
+    results = []
+    for term in search_terms:
+        repos = search_github_repos(term, limit=30)
+        for repo in repos:
+            name = repo.get("fullName", "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            results.append({
+                "repo": name,
+                "description": repo.get("description") or "",
+            })
+        time.sleep(1)  # rate limit between searches
+    return results
+
+
+def search_github_mcp_servers() -> list[dict]:
+    """Search GitHub for MCP server repos."""
+    search_terms = [
+        "mcp-server in:name",
+        "modelcontextprotocol in:name",
+        "mcp server claude in:description",
+    ]
+    seen = set()
+    results = []
+    for term in search_terms:
+        repos = search_github_repos(term, limit=50)
+        for repo in repos:
+            name = repo.get("fullName", "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            results.append({
+                "repo": name,
+                "description": repo.get("description") or "",
+            })
+        time.sleep(1)
+    return results
+
+
+def search_github_apm_packages() -> list[dict]:
+    """Search GitHub for repos with apm.yml files (APM packages)."""
+    try:
+        result = subprocess.run(
+            ["gh", "search", "code", "filename:apm.yml", "--limit", "50",
+             "--json", "repository,path"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return []
+        data = json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError):
+        return []
+
+    seen = set()
+    repos = []
+    for item in data:
+        repo = item["repository"]["nameWithOwner"]
+        if repo in seen:
+            continue
+        seen.add(repo)
+        repos.append({"repo": repo, "path": item["path"]})
+    return repos
+
+
+def search_other_awesome_lists() -> list[dict]:
+    """Search GitHub for other awesome-claude lists beyond hesreallyhim's."""
+    search_terms = [
+        "awesome-claude-code in:name",
+        "awesome-claude in:name",
+        "awesome claude code in:name",
+    ]
+    seen = set()
+    readme_repos = []
+    for term in search_terms:
+        repos = search_github_repos(term, limit=20)
+        for repo in repos:
+            name = repo.get("fullName", "")
+            if not name or name in seen:
+                continue
+            # Skip the primary source (already handled)
+            if name == "hesreallyhim/awesome-claude-code":
+                continue
+            seen.add(name)
+            readme_repos.append(name)
+        time.sleep(1)
+    return readme_repos
+
+
 def insert_via_wrangler(skill: dict, tmpdir: str) -> bool:
     """Insert a skill into remote D1 via wrangler d1 execute."""
     def sql_escape(s: str) -> str:
@@ -197,24 +322,26 @@ def insert_via_wrangler(skill: dict, tmpdir: str) -> bool:
         return "'" + s.replace("'", "''") + "'"
 
     content = skill.get("content")
+    tags = " ".join(skill.get("metadata", {}).get("tags", []))
     if content:
         sql = (
             f"INSERT OR IGNORE INTO skills "
-            f"(id, source, name, description, version_hash, source_url, install_type, content, metadata) "
+            f"(id, source, name, description, version_hash, source_url, install_type, content, tags, metadata) "
             f"VALUES ({sql_escape(skill['id'])}, {sql_escape(skill['source'])}, "
             f"{sql_escape(skill['name'])}, {sql_escape(skill['description'])}, "
             f"{sql_escape(skill['version_hash'])}, {sql_escape(skill['source_url'])}, "
             f"{sql_escape(skill['install_type'])}, {sql_escape(content)}, "
+            f"{sql_escape(tags)}, "
             f"{sql_escape(json.dumps(skill.get('metadata', {})))});"
         )
     else:
         sql = (
             f"INSERT OR IGNORE INTO skills "
-            f"(id, source, name, description, version_hash, source_url, install_type, metadata) "
+            f"(id, source, name, description, version_hash, source_url, install_type, tags, metadata) "
             f"VALUES ({sql_escape(skill['id'])}, {sql_escape(skill['source'])}, "
             f"{sql_escape(skill['name'])}, {sql_escape(skill['description'])}, "
             f"{sql_escape(skill['version_hash'])}, {sql_escape(skill['source_url'])}, "
-            f"{sql_escape(skill['install_type'])}, "
+            f"{sql_escape(skill['install_type'])}, {sql_escape(tags)}, "
             f"{sql_escape(json.dumps(skill.get('metadata', {})))});"
         )
 
@@ -306,6 +433,151 @@ def main():
                 "install_type": "skill",
                 "author": owner,
             })
+
+        # --- Source 3: GitHub search for Claude Code skills ---
+        print()
+        print("=== Source: GitHub Claude Code skill search ===")
+        claude_skills = search_github_claude_skills()
+        print(f"  Found {len(claude_skills)} repos")
+        added_3 = 0
+
+        for repo_info in claude_skills:
+            repo = repo_info["repo"]
+            skill_id = f"github:{repo}"
+            if skill_id in seen_ids:
+                continue
+            seen_ids.add(skill_id)
+
+            description = repo_info.get("description") or ""
+            if not description:
+                description = f"Claude Code skill from {repo}"
+
+            name = repo.split("/")[1]
+            name = re.sub(r'[-_]', ' ', name).title()
+            owner = repo.split("/")[0]
+
+            all_skills.append({
+                "id": skill_id,
+                "source": "github",
+                "name": name,
+                "description": description,
+                "source_url": f"https://github.com/{repo}",
+                "install_type": "skill",
+                "author": owner,
+            })
+            added_3 += 1
+
+        print(f"  Added {added_3} new skills")
+
+        # --- Source 4: MCP servers ---
+        print()
+        print("=== Source: GitHub MCP servers ===")
+        mcp_repos = search_github_mcp_servers()
+        print(f"  Found {len(mcp_repos)} repos")
+        added_4 = 0
+
+        for repo_info in mcp_repos:
+            repo = repo_info["repo"]
+            skill_id = f"github:{repo}"
+            if skill_id in seen_ids:
+                continue
+            seen_ids.add(skill_id)
+
+            description = repo_info.get("description") or ""
+            if not description:
+                description = f"MCP server from {repo}"
+
+            name = repo.split("/")[1]
+            name = re.sub(r'[-_]', ' ', name).title()
+            owner = repo.split("/")[0]
+
+            # Determine if hosted or local based on name/description hints
+            text_lower = f"{name} {description}".lower()
+            if any(w in text_lower for w in ["hosted", "cloud", "saas", "api"]):
+                install_type = "mcp-hosted"
+            else:
+                install_type = "mcp-local"
+
+            all_skills.append({
+                "id": skill_id,
+                "source": "github",
+                "name": name,
+                "description": description,
+                "source_url": f"https://github.com/{repo}",
+                "install_type": install_type,
+                "author": owner,
+            })
+            added_4 += 1
+
+        print(f"  Added {added_4} new MCP servers")
+
+        # --- Source 5: APM packages ---
+        print()
+        print("=== Source: GitHub APM packages ===")
+        apm_repos = search_github_apm_packages()
+        print(f"  Found {len(apm_repos)} repos with apm.yml")
+        added_5 = 0
+
+        for repo_info in apm_repos:
+            repo = repo_info["repo"]
+            skill_id = f"github:{repo}"
+            if skill_id in seen_ids:
+                continue
+            seen_ids.add(skill_id)
+
+            repo_data = gh_api(f"repos/{repo}")
+            description = ""
+            if repo_data:
+                description = repo_data.get("description") or ""
+            if not description:
+                description = f"APM package from {repo}"
+
+            name = repo.split("/")[1]
+            name = re.sub(r'[-_]', ' ', name).title()
+            owner = repo.split("/")[0]
+
+            all_skills.append({
+                "id": skill_id,
+                "source": "github",
+                "name": name,
+                "description": description,
+                "source_url": f"https://github.com/{repo}",
+                "install_type": "skill",
+                "author": owner,
+            })
+            added_5 += 1
+
+        print(f"  Added {added_5} new APM packages")
+
+        # --- Source 6: Other awesome-claude lists ---
+        print()
+        print("=== Source: Other awesome-claude lists ===")
+        other_lists = search_other_awesome_lists()
+        print(f"  Found {len(other_lists)} other awesome lists")
+        added_6 = 0
+
+        for list_repo in other_lists:
+            readme_data = gh_api(f"repos/{list_repo}/readme")
+            if not readme_data or "content" not in readme_data:
+                print(f"  Skipping {list_repo} (no README)")
+                continue
+
+            import base64
+            readme_text = base64.b64decode(readme_data["content"]).decode("utf-8")
+            parsed = parse_awesome_readme(readme_text)
+            print(f"  Parsed {len(parsed)} entries from {list_repo}")
+
+            for skill in parsed:
+                if skill["id"] in seen_ids:
+                    continue
+                seen_ids.add(skill["id"])
+                skill["source"] = f"awesome-list:{list_repo}"
+                all_skills.append(skill)
+                added_6 += 1
+
+            time.sleep(1)
+
+        print(f"  Added {added_6} new skills from other lists")
 
         print()
         print(f"=== Total unique skills: {len(all_skills)} ===")

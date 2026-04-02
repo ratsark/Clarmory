@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS skills (
   source_url TEXT NOT NULL,         -- where to fetch the skill from
   install_type TEXT NOT NULL DEFAULT 'skill',  -- skill | mcp-local | mcp-hosted
   content TEXT,                      -- optional inline skill content (for self-contained skills without upstream)
+  tags TEXT DEFAULT '',             -- space-separated tags for FTS (extracted from metadata)
   metadata TEXT DEFAULT '{}',       -- JSON blob for source-specific extras
   indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -17,30 +18,33 @@ CREATE TABLE IF NOT EXISTS skills (
 CREATE INDEX IF NOT EXISTS idx_skills_source ON skills(source);
 CREATE INDEX IF NOT EXISTS idx_skills_install_type ON skills(install_type);
 
--- Full-text search over skill name + description
+-- Full-text search over skill name + description + tags
+-- Porter stemming enables matching across word forms (e.g. "planning" matches "plan")
 CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
   name,
   description,
+  tags,
   content=skills,
-  content_rowid=rowid
+  content_rowid=rowid,
+  tokenize='porter unicode61'
 );
 
 -- Keep FTS in sync with skills table
 CREATE TRIGGER IF NOT EXISTS skills_ai AFTER INSERT ON skills BEGIN
-  INSERT INTO skills_fts(rowid, name, description)
-  VALUES (new.rowid, new.name, new.description);
+  INSERT INTO skills_fts(rowid, name, description, tags)
+  VALUES (new.rowid, new.name, new.description, new.tags);
 END;
 
 CREATE TRIGGER IF NOT EXISTS skills_ad AFTER DELETE ON skills BEGIN
-  INSERT INTO skills_fts(skills_fts, rowid, name, description)
-  VALUES ('delete', old.rowid, old.name, old.description);
+  INSERT INTO skills_fts(skills_fts, rowid, name, description, tags)
+  VALUES ('delete', old.rowid, old.name, old.description, old.tags);
 END;
 
 CREATE TRIGGER IF NOT EXISTS skills_au AFTER UPDATE ON skills BEGIN
-  INSERT INTO skills_fts(skills_fts, rowid, name, description)
-  VALUES ('delete', old.rowid, old.name, old.description);
-  INSERT INTO skills_fts(rowid, name, description)
-  VALUES (new.rowid, new.name, new.description);
+  INSERT INTO skills_fts(skills_fts, rowid, name, description, tags)
+  VALUES ('delete', old.rowid, old.name, old.description, old.tags);
+  INSERT INTO skills_fts(rowid, name, description, tags)
+  VALUES (new.rowid, new.name, new.description, new.tags);
 END;
 
 -- Reviews: multi-stage evaluations from agents
@@ -54,6 +58,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   security_flag INTEGER NOT NULL DEFAULT 0,  -- 1 if security issue flagged
   trust_level TEXT NOT NULL DEFAULT 'anonymous',  -- 'anonymous' | 'pseudonymous' | 'github_verified'
   public_key TEXT,                    -- reviewer's Ed25519 public key (FK to identities), null for anonymous
+  model TEXT,                          -- model/agent that wrote the review (e.g. 'claude-opus-4-6')
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (skill_id) REFERENCES skills(id)
