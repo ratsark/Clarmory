@@ -378,17 +378,20 @@ describe("GET /skills/:id/reviews", () => {
 // --- Create Review (SKILL.md contract) ---
 
 describe("POST /reviews", () => {
-  it("returns 401 without signature", async () => {
-    const { status, body } = await jsonResponse<{ error: string }>("/reviews", {
+  it("accepts unauthenticated review as anonymous", async () => {
+    const { status, body } = await jsonResponse<{ review_key: string; trust_level: string }>("/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        agent_id: "test-agent",
+        agent_id: "test-agent-anon",
         skill_id: "github:trailofbits/skills/security-audit",
+        stage: "code_review",
+        summary: "Looks fine",
       }),
     });
-    expect(status).toBe(401);
-    expect(body.error).toContain("Signature required");
+    expect(status).toBe(201);
+    expect(body.trust_level).toBe("anonymous");
+    expect(body.review_key).toMatch(/^rv_/);
   });
 
   it("returns 400 without required fields", async () => {
@@ -418,7 +421,7 @@ describe("POST /reviews", () => {
     expect(status).toBe(201);
     expect(body.review_key).toMatch(/^rv_/);
     expect(body.created).toBe(true);
-    expect(body.trust_level).toBe("anonymous");
+    expect(body.trust_level).toBe("pseudonymous");
   });
 
   it("creates a review with object stage format (backwards compat)", async () => {
@@ -446,15 +449,15 @@ describe("POST /reviews", () => {
     expect(body.review_key).toBeDefined();
   });
 
-  it("auto-registers identity on first review", async () => {
-    // The identity should have been auto-created by previous tests
+  it("auto-registers identity on first signed review", async () => {
+    // The identity should have been auto-created by previous signed review tests
     const identity = await env.DB.prepare(
       "SELECT * FROM identities WHERE public_key = ?"
     )
       .bind(testPublicKeyB64)
       .first();
     expect(identity).not.toBeNull();
-    expect(identity!.trust_level).toBe("anonymous");
+    expect(identity!.trust_level).toBe("pseudonymous");
   });
 });
 
@@ -475,13 +478,15 @@ describe("PATCH /reviews/:key", () => {
     reviewKey = body.review_key;
   });
 
-  it("returns 401 without signature", async () => {
+  it("accepts unauthenticated PATCH as anonymous", async () => {
+    // Unauthenticated updates are allowed (anonymous tier)
     const { status } = await jsonResponse("/reviews/some-key", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rating: 5 }),
     });
-    expect(status).toBe(401);
+    // 404 because "some-key" doesn't exist, but NOT 401
+    expect(status).toBe(404);
   });
 
   it("returns 404 for unknown review key", async () => {
@@ -625,17 +630,35 @@ describe("signature auth", () => {
     expect(reviewsStatus).toBe(200);
   });
 
-  it("rejects missing signature on review creation", async () => {
-    const { status, body } = await jsonResponse<{ error: string }>("/reviews", {
+  it("accepts no-auth review as anonymous tier", async () => {
+    const { status, body } = await jsonResponse<{ trust_level: string }>("/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "test-noauth",
+        skill_id: "github:trailofbits/skills/security-audit",
+        stage: "code_review",
+        summary: "Quick look",
+      }),
+    });
+    expect(status).toBe(201);
+    expect(body.trust_level).toBe("anonymous");
+  });
+
+  it("rejects partial auth headers (public key without signature)", async () => {
+    const { status, body } = await jsonResponse<{ error: string }>("/reviews", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Clarmory-Public-Key": testPublicKeyB64,
+      },
       body: JSON.stringify({
         agent_id: "test",
         skill_id: "github:trailofbits/skills/security-audit",
       }),
     });
     expect(status).toBe(401);
-    expect(body.error).toContain("Signature required");
+    expect(body.error).toContain("Both");
   });
 
   it("rejects invalid signature", async () => {
@@ -655,7 +678,7 @@ describe("signature auth", () => {
     expect(response.status).toBe(401);
   });
 
-  it("accepts valid signature and auto-registers identity", async () => {
+  it("accepts valid signature and auto-registers identity as pseudonymous", async () => {
     // Already tested via previous review creation tests
     const identity = await env.DB.prepare(
       "SELECT * FROM identities WHERE public_key = ?"
@@ -663,7 +686,7 @@ describe("signature auth", () => {
       .bind(testPublicKeyB64)
       .first();
     expect(identity).not.toBeNull();
-    expect(identity!.trust_level).toBe("anonymous");
+    expect(identity!.trust_level).toBe("pseudonymous");
   });
 });
 

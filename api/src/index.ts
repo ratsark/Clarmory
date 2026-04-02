@@ -203,12 +203,14 @@ async function verifySignature(
 }
 
 interface AuthResult {
-  publicKey: string;
-  trustLevel: "anonymous" | "github_verified";
+  publicKey: string | null;
+  trustLevel: "anonymous" | "pseudonymous" | "github_verified";
 }
 
-// Authenticate a review request. Returns identity info or null.
-// Reads the body as bytes for signature verification, then parses as JSON.
+// Authenticate a review request. Three tiers:
+// 1. No auth headers → anonymous (no identity tracking)
+// 2. Valid keypair signature → pseudonymous (consistent identity) or github_verified
+// 3. Invalid signature → rejected (401)
 async function authenticateReview(
   db: D1Database,
   request: Request,
@@ -221,16 +223,23 @@ async function authenticateReview(
   const publicKeyB64 = request.headers.get("x-clarmory-public-key");
   const signatureB64 = request.headers.get("x-clarmory-signature");
 
+  // No auth headers → anonymous tier
+  if (!publicKeyB64 && !signatureB64) {
+    return {
+      auth: { publicKey: null, trustLevel: "anonymous" },
+      body,
+    };
+  }
+
+  // Partial headers (one without the other) → reject
   if (!publicKeyB64 || !signatureB64) {
     return json(
-      {
-        error:
-          "Signature required. Include X-Clarmory-Public-Key and X-Clarmory-Signature headers.",
-      },
+      { error: "Both X-Clarmory-Public-Key and X-Clarmory-Signature headers are required when using keypair auth." },
       401
     );
   }
 
+  // Both headers present → verify signature
   const valid = await verifySignature(publicKeyB64, signatureB64, bodyBytes);
   if (!valid) {
     return json({ error: "Invalid signature" }, 401);
@@ -245,17 +254,17 @@ async function authenticateReview(
   if (!identity) {
     await db
       .prepare(
-        "INSERT INTO identities (public_key, trust_level, ip_address) VALUES (?, 'anonymous', ?)"
+        "INSERT INTO identities (public_key, trust_level, ip_address) VALUES (?, 'pseudonymous', ?)"
       )
       .bind(publicKeyB64, ip)
       .run();
-    identity = { public_key: publicKeyB64, trust_level: "anonymous" };
+    identity = { public_key: publicKeyB64, trust_level: "pseudonymous" };
   }
 
   return {
     auth: {
       publicKey: publicKeyB64,
-      trustLevel: identity.trust_level as "anonymous" | "github_verified",
+      trustLevel: identity.trust_level as "pseudonymous" | "github_verified",
     },
     body,
   };

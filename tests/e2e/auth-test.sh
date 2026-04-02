@@ -190,28 +190,41 @@ else
 fi
 
 # =======================================================
-# TIER 1: Anonymous Keypair Auth
+# TIER 1: Anonymous (no auth headers)
 # =======================================================
 echo ""
 echo "========================================"
-echo "  TIER 1: Anonymous Keypair Auth"
+echo "  TIER 1: Anonymous (no auth)"
 echo "========================================"
 
 # -------------------------------------------------------
-# Test 2: Submit review without any auth headers (should 401)
+# Test 2: Submit review without auth headers (should 201, anonymous)
 # -------------------------------------------------------
 echo ""
-echo "--- 2. Review Without Auth Headers (should 401) ---"
+echo "--- 2. Review Without Auth Headers (should 201, anonymous) ---"
 
 NOAUTH_BODY="{\"agent_id\":\"no-auth\",\"extension_id\":\"$SKILL_ID\",\"version_hash\":\"$VERSION_HASH\",\"stage\":\"code_review\",\"security_ok\":true,\"quality_rating\":3,\"summary\":\"No auth test\"}"
 
 RESPONSE=$(unsigned_post "$API_URL/reviews" "$NOAUTH_BODY")
 STATUS=$(get_status "$RESPONSE")
+BODY=$(get_body "$RESPONSE")
 
-if [ "$STATUS" = "401" ]; then
-  pass "POST /reviews without auth returns 401"
+if [ "$STATUS" = "201" ]; then
+  pass "POST /reviews without auth returns 201"
 else
-  fail "POST /reviews without auth returned $STATUS (expected 401)"
+  fail "POST /reviews without auth returned $STATUS (expected 201)"
+fi
+
+NOAUTH_TRUST=$(echo "$BODY" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d.get('trust_level', ''))
+" 2>/dev/null || echo "")
+
+if [ "$NOAUTH_TRUST" = "anonymous" ]; then
+  pass "Unauthenticated review has trust_level: anonymous"
+else
+  fail "Expected trust_level 'anonymous', got '$NOAUTH_TRUST'"
 fi
 
 # -------------------------------------------------------
@@ -235,13 +248,21 @@ else
   fail "Invalid signature returned $STATUS (expected 401)"
 fi
 
+# =======================================================
+# TIER 2: Pseudonymous (valid keypair)
+# =======================================================
+echo ""
+echo "========================================"
+echo "  TIER 2: Pseudonymous (keypair signed)"
+echo "========================================"
+
 # -------------------------------------------------------
-# Test 4: Submit review with valid keypair (should 201)
+# Test 4: Submit review with valid keypair (should 201, pseudonymous)
 # -------------------------------------------------------
 echo ""
-echo "--- 4. Signed Review (Tier 1 anonymous) ---"
+echo "--- 4. Signed Review (Tier 2 pseudonymous) ---"
 
-REVIEW_BODY="{\"agent_id\":\"auth-test\",\"extension_id\":\"$SKILL_ID\",\"version_hash\":\"$VERSION_HASH\",\"stage\":\"code_review\",\"security_ok\":true,\"quality_rating\":4,\"summary\":\"Tier 1 anonymous auth test\"}"
+REVIEW_BODY="{\"agent_id\":\"auth-test\",\"extension_id\":\"$SKILL_ID\",\"version_hash\":\"$VERSION_HASH\",\"stage\":\"code_review\",\"security_ok\":true,\"quality_rating\":4,\"summary\":\"Tier 2 pseudonymous auth test\"}"
 
 RESPONSE=$(signed_post "$API_URL/reviews" "$REVIEW_BODY")
 STATUS=$(get_status "$RESPONSE")
@@ -260,10 +281,10 @@ d = json.load(sys.stdin)
 print(d.get('trust_level', ''))
 " 2>/dev/null || echo "")
 
-if [ "$TRUST_LEVEL" = "anonymous" ]; then
-  pass "Review has trust_level: anonymous"
+if [ "$TRUST_LEVEL" = "pseudonymous" ]; then
+  pass "Review has trust_level: pseudonymous"
 else
-  fail "Expected trust_level 'anonymous', got '$TRUST_LEVEL'"
+  fail "Expected trust_level 'pseudonymous', got '$TRUST_LEVEL'"
 fi
 
 REVIEW_KEY_T1=$(echo "$BODY" | python3 -c "
@@ -273,7 +294,7 @@ print(d.get('review_key', ''))
 " 2>/dev/null || echo "")
 
 if [ -n "$REVIEW_KEY_T1" ]; then
-  pass "Tier 1 review created: $REVIEW_KEY_T1"
+  pass "Tier 2 review created: $REVIEW_KEY_T1"
 else
   fail "Tier 1 review did not return review_key"
 fi
@@ -335,20 +356,20 @@ else:
 fi
 
 # -------------------------------------------------------
-# Test 6: PATCH review without auth (should 401)
+# Test 6: PATCH review without auth (should 200, anonymous)
 # -------------------------------------------------------
 echo ""
-echo "--- 6. PATCH Without Auth (should 401) ---"
+echo "--- 6. PATCH Without Auth (should 200, anonymous) ---"
 
 if [ -n "$REVIEW_KEY_T1" ]; then
-  PATCH_BODY='{"stage":"post_use","worked":true,"rating":4,"task_summary":"auth test"}'
+  PATCH_BODY='{"stage":"user_decision","installed":true}'
   RESPONSE=$(unsigned_patch "$API_URL/reviews/$REVIEW_KEY_T1" "$PATCH_BODY")
   STATUS=$(get_status "$RESPONSE")
 
-  if [ "$STATUS" = "401" ]; then
-    pass "PATCH /reviews/:key without auth returns 401"
+  if [ "$STATUS" = "200" ]; then
+    pass "PATCH /reviews/:key without auth returns 200 (anonymous)"
   else
-    fail "PATCH /reviews/:key without auth returned $STATUS (expected 401)"
+    fail "PATCH /reviews/:key without auth returned $STATUS (expected 200)"
   fi
 else
   fail "Skipped — no review_key from previous test"
@@ -374,19 +395,54 @@ else
   fail "Skipped — no review_key from previous test"
 fi
 
+# -------------------------------------------------------
+# Test 8: Partial auth headers (one without the other → 401)
+# -------------------------------------------------------
+echo ""
+echo "--- 8. Partial Auth Headers (should 401) ---"
+
+PARTIAL_BODY="{\"agent_id\":\"partial\",\"extension_id\":\"$SKILL_ID\",\"version_hash\":\"$VERSION_HASH\",\"stage\":\"code_review\",\"security_ok\":true,\"quality_rating\":3,\"summary\":\"Partial headers test\"}"
+
+# Public key without signature
+RESPONSE=$(curl -s -w '\n%{http_code}' -X POST "$API_URL/reviews" \
+  -H "Content-Type: application/json" \
+  -H "X-Clarmory-Public-Key: $PUB_KEY_B64" \
+  -d "$PARTIAL_BODY")
+STATUS=$(get_status "$RESPONSE")
+
+if [ "$STATUS" = "401" ]; then
+  pass "Public key without signature returns 401"
+else
+  fail "Public key without signature returned $STATUS (expected 401)"
+fi
+
+# Signature without public key
+PARTIAL_SIG=$(sign_body "$PARTIAL_BODY")
+RESPONSE=$(curl -s -w '\n%{http_code}' -X POST "$API_URL/reviews" \
+  -H "Content-Type: application/json" \
+  -H "X-Clarmory-Signature: $PARTIAL_SIG" \
+  -d "$PARTIAL_BODY")
+STATUS=$(get_status "$RESPONSE")
+
+if [ "$STATUS" = "401" ]; then
+  pass "Signature without public key returns 401"
+else
+  fail "Signature without public key returned $STATUS (expected 401)"
+fi
+
 # =======================================================
-# TIER 2: GitHub Verified Auth
+# TIER 3: GitHub Verified Auth
 # =======================================================
 echo ""
 echo "========================================"
-echo "  TIER 2: GitHub Verified Auth"
+echo "  TIER 3: GitHub Verified Auth"
 echo "========================================"
 
 # -------------------------------------------------------
-# Test 8: Invalid GitHub token does not upgrade trust
+# Test 9: Invalid GitHub token does not upgrade trust
 # -------------------------------------------------------
 echo ""
-echo "--- 8. Invalid GitHub Token ---"
+echo "--- 9. Invalid GitHub Token ---"
 
 GH_VERIFY_BODY="{\"github_token\":\"ghp_invalidtoken000000000000000000fake\",\"public_key\":\"$PUB_KEY_B64\"}"
 
@@ -402,7 +458,7 @@ else
 fi
 
 echo ""
-echo "  NOTE: Full Tier 2 verification requires a real GitHub token."
+echo "  NOTE: Full Tier 3 verification requires a real GitHub token."
 echo "  To test: export CLARMORY_TEST_GH_TOKEN=ghp_... and re-run."
 
 if [ -n "${CLARMORY_TEST_GH_TOKEN:-}" ]; then
@@ -458,10 +514,10 @@ echo "  DUAL SCORING"
 echo "========================================"
 
 # -------------------------------------------------------
-# Test 9: Search results include dual ratings
+# Test 10: Search results include dual ratings
 # -------------------------------------------------------
 echo ""
-echo "--- 9. Dual Scoring in Search Results ---"
+echo "--- 10. Dual Scoring in Search Results ---"
 
 RESPONSE=$(http_get "$API_URL/search?q=mqtt")
 STATUS=$(get_status "$RESPONSE")
@@ -508,10 +564,10 @@ else
 fi
 
 # -------------------------------------------------------
-# Test 10: Skill detail shows trust level breakdown
+# Test 11: Skill detail shows trust level breakdown
 # -------------------------------------------------------
 echo ""
-echo "--- 10. Trust Level Breakdown in Skill Detail ---"
+echo "--- 11. Trust Level Breakdown in Skill Detail ---"
 
 RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC")
 STATUS=$(get_status "$RESPONSE")
@@ -546,10 +602,10 @@ echo "  RATE LIMITING"
 echo "========================================"
 
 # -------------------------------------------------------
-# Test 11: IP rate limiting on review submissions (30/hour)
+# Test 12: IP rate limiting on review submissions (30/hour)
 # -------------------------------------------------------
 echo ""
-echo "--- 11. Review Submission Rate Limiting ---"
+echo "--- 12. Review Submission Rate Limiting ---"
 
 echo "  Submitting reviews rapidly (limit: 30/hour)..."
 RATE_LIMITED=false
@@ -573,10 +629,10 @@ if [ "$RATE_LIMITED" = "false" ]; then
 fi
 
 # -------------------------------------------------------
-# Test 12: GitHub auth rate limiting (10/hour)
+# Test 13: GitHub auth rate limiting (10/hour)
 # -------------------------------------------------------
 echo ""
-echo "--- 12. GitHub Auth Rate Limiting ---"
+echo "--- 13. GitHub Auth Rate Limiting ---"
 
 echo "  Sending rapid GitHub verify requests (limit: 10/hour)..."
 GH_RATE_LIMITED=false

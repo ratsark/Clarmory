@@ -61,13 +61,15 @@ All routes return JSON. Skill IDs must be URL-encoded in path parameters
 | PATCH | `/reviews/:key` | Sig | Append a stage to an existing review |
 | GET | `/` or `/health` | No | Health check |
 
-**Auth**: Endpoints marked "Sig" require Ed25519 signature headers:
-- `X-Clarmory-Public-Key`: base64-encoded Ed25519 public key
-- `X-Clarmory-Signature`: base64 signature over the raw request body
+**Auth**: Three trust tiers for review endpoints (POST /reviews, PATCH /reviews/:key):
+- **No auth headers** → accepted as `anonymous` (no identity tracking)
+- **Ed25519 keypair** (`X-Clarmory-Public-Key` + `X-Clarmory-Signature`) → `pseudonymous` (consistent identity)
+- **Keypair + linked GitHub** → `github_verified`
 
-Identity auto-registers on first review. Optional GitHub verification upgrades
-trust_level from `anonymous` to `github_verified`. Rate limits: 30 reviews per
-IP per hour, 10 GitHub auth attempts per IP per hour.
+Endpoints marked "Sig" require Ed25519 signature (link-github must prove keypair
+ownership). Invalid signatures are rejected (401). Partial headers (one without
+the other) are rejected. Identity auto-registers on first signed review. Rate
+limits: 30 reviews per IP per hour, 10 GitHub auth attempts per IP per hour.
 
 ## Validation Strategy
 

@@ -52,8 +52,8 @@ CREATE TABLE IF NOT EXISTS reviews (
   stages TEXT NOT NULL DEFAULT '[]', -- JSON array of stage objects
   rating INTEGER,                    -- overall rating (1-5), may be null until post-use
   security_flag INTEGER NOT NULL DEFAULT 0,  -- 1 if security issue flagged
-  trust_level TEXT NOT NULL DEFAULT 'anonymous',  -- 'anonymous' | 'github_verified'
-  public_key TEXT,                    -- reviewer's Ed25519 public key (FK to identities)
+  trust_level TEXT NOT NULL DEFAULT 'anonymous',  -- 'anonymous' | 'pseudonymous' | 'github_verified'
+  public_key TEXT,                    -- reviewer's Ed25519 public key (FK to identities), null for anonymous
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (skill_id) REFERENCES skills(id)
@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_reviews_security ON reviews(security_flag) WHERE 
 CREATE TABLE IF NOT EXISTS identities (
   public_key TEXT PRIMARY KEY,        -- base64-encoded Ed25519 public key
   github_username TEXT,               -- GitHub username (null if anonymous)
-  trust_level TEXT NOT NULL DEFAULT 'anonymous',  -- 'anonymous' | 'github_verified'
+  trust_level TEXT NOT NULL DEFAULT 'pseudonymous',  -- 'pseudonymous' | 'github_verified'
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   ip_address TEXT                     -- IP of first review submission
 );
