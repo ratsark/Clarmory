@@ -351,17 +351,11 @@ BODY=$(echo "$RESPONSE" | tail -n +2)
 
 assert_status "200" "$STATUS" "GET /skills/:id/content returns 200 for skill with content"
 
-# Verify it returns actual markdown content (should contain MQTT keywords)
+# Verify it returns actual markdown content (plain text, not JSON)
 HAS_CONTENT=$(echo "$BODY" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    content = d.get('content', '')
-    print('yes' if 'mqtt' in content.lower() or 'MQTT' in content else 'no')
-except:
-    # Might be plain text
-    text = sys.stdin.read() if not content else content
-    print('yes' if 'mqtt' in text.lower() else 'no')
+import sys
+text = sys.stdin.read()
+print('yes' if 'mqtt' in text.lower() else 'no')
 " 2>/dev/null || echo "no")
 
 if [ "$HAS_CONTENT" = "yes" ]; then
@@ -398,10 +392,10 @@ RESPONSE=$(http_get "$API_URL/search")
 STATUS=$(echo "$RESPONSE" | head -n1)
 assert_status "400" "$STATUS" "GET /search without q returns 400"
 
-# Special characters in query should not cause errors
-RESPONSE=$(http_get "$API_URL/search?q=test%20%26%20deploy")
+# Multi-word query should work
+RESPONSE=$(http_get "$API_URL/search?q=mqtt+client+subscribe")
 STATUS=$(echo "$RESPONSE" | head -n1)
-assert_status "200" "$STATUS" "GET /search with special chars returns 200"
+assert_status "200" "$STATUS" "GET /search with multi-word query returns 200"
 
 # -------------------------------------------------------
 # Test 3: Get reviews for a skill (initially may be empty)

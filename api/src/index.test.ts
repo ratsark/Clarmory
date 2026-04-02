@@ -484,6 +484,29 @@ describe("POST /reviews", () => {
     expect(body.review_key).toBeDefined();
   });
 
+  it("rejects rating outside 1-5 range", async () => {
+    const { status: s1 } = await signedRequest("/reviews", {
+      agent_id: "test-rating",
+      skill_id: "github:trailofbits/skills/security-audit",
+      rating: 0,
+    });
+    expect(s1).toBe(400);
+
+    const { status: s2 } = await signedRequest("/reviews", {
+      agent_id: "test-rating",
+      skill_id: "github:trailofbits/skills/security-audit",
+      rating: 6,
+    });
+    expect(s2).toBe(400);
+
+    const { status: s3 } = await signedRequest("/reviews", {
+      agent_id: "test-rating",
+      skill_id: "github:trailofbits/skills/security-audit",
+      rating: 3.5,
+    });
+    expect(s3).toBe(400);
+  });
+
   it("auto-registers identity on first signed review", async () => {
     // The identity should have been auto-created by previous signed review tests
     const identity = await env.DB.prepare(
@@ -513,15 +536,51 @@ describe("PATCH /reviews/:key", () => {
     reviewKey = body.review_key;
   });
 
-  it("accepts unauthenticated PATCH as anonymous", async () => {
-    // Unauthenticated updates are allowed (anonymous tier)
-    const { status } = await jsonResponse("/reviews/some-key", {
-      method: "PATCH",
+  it("rejects PATCH on anonymous review (immutable)", async () => {
+    // Create an anonymous review (no auth headers)
+    const { body: anonBody } = await jsonResponse<{ review_key: string }>("/reviews", {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating: 5 }),
+      body: JSON.stringify({
+        agent_id: "test-anon-immutable",
+        skill_id: "github:OthmanAdi/planning-with-files",
+        stage: "code_review",
+        summary: "Quick look",
+      }),
     });
-    // 404 because "some-key" doesn't exist, but NOT 401
-    expect(status).toBe(404);
+    // Try to PATCH it with a signed request — should be rejected
+    const { status, body } = await signedRequest(
+      `/reviews/${anonBody.review_key}`,
+      { stage: "post_use", worked: true, rating: 4 },
+      "PATCH"
+    );
+    expect(status).toBe(403);
+    expect(body.error).toContain("Anonymous reviews cannot be updated");
+  });
+
+  it("rejects PATCH from different keypair", async () => {
+    // Generate a second keypair
+    const otherKeyPair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const otherPubBytes = await crypto.subtle.exportKey("raw", otherKeyPair.publicKey);
+    const otherPubB64 = btoa(String.fromCharCode(...new Uint8Array(otherPubBytes)));
+
+    const patchBody = JSON.stringify({ stage: "post_use", worked: false, rating: 1 });
+    const patchBytes = new TextEncoder().encode(patchBody);
+    const sig = await crypto.subtle.sign("Ed25519", otherKeyPair.privateKey, patchBytes);
+    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
+
+    const response = await callWorker(`/reviews/${reviewKey}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Clarmory-Public-Key": otherPubB64,
+        "X-Clarmory-Signature": sigB64,
+      },
+      body: patchBody,
+    });
+    expect(response.status).toBe(403);
+    const body = await response.json() as { error: string };
+    expect(body.error).toContain("different identity");
   });
 
   it("returns 404 for unknown review key", async () => {

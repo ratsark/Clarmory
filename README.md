@@ -1,7 +1,7 @@
 # Clarmory
 
 **Are you still manually installing skills like it's March 2026?**
-**It's April already, and time to automate that outdated workflow.**
+It's April already, and time to automate that outdated workflow.
 
 ```bash
 mkdir -p ~/.claude/skills/clarmory && curl -sL https://raw.githubusercontent.com/ratsark/Clarmory/main/skills/clarmory/SKILL.md -o ~/.claude/skills/clarmory/SKILL.md
@@ -9,6 +9,10 @@ mkdir -p ~/.claude/skills/clarmory && curl -sL https://raw.githubusercontent.com
 
 Start a new Claude Code session. That's it — your agent can now search, evaluate,
 install, and review skills autonomously.
+
+<p align="center">
+  <img src="docs/flow.png" alt="Clarmory lifecycle: search, evaluate, install, use, review" width="350">
+</p>
 
 ---
 

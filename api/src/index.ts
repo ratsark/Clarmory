@@ -484,6 +484,15 @@ function buildVersionInfo(
   };
 }
 
+// Validate a rating value: must be an integer 1-5 or undefined/null.
+function validateRating(value: unknown): number | null | "invalid" {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 5) {
+    return "invalid";
+  }
+  return value;
+}
+
 // --- Route handlers ---
 
 const searchSkills: RouteHandler = async (request, env) => {
@@ -758,10 +767,18 @@ const createReview: RouteHandler = async (request, env) => {
   const skillId = (body.skill_id || body.extension_id) as string | undefined;
   const versionHash = body.version_hash as string | undefined;
   const stageType = body.stage as string | undefined;
-  const rating = body.rating as number | undefined;
-  const qualityRating = body.quality_rating as number | undefined;
   const securityFlag = body.security_ok === false || body.security_flag === true;
   const model = (body.model as string | undefined) || null;
+
+  // Validate ratings
+  const rating = validateRating(body.rating);
+  if (rating === "invalid") {
+    return json({ error: "rating must be an integer between 1 and 5" }, 400);
+  }
+  const qualityRating = validateRating(body.quality_rating);
+  if (qualityRating === "invalid") {
+    return json({ error: "quality_rating must be an integer between 1 and 5" }, 400);
+  }
 
   if (!agentId || !skillId) {
     return json(
@@ -833,17 +850,32 @@ const updateReview: RouteHandler = async (request, env, params) => {
   // Authenticate via Ed25519 signature
   const authResult = await authenticateReview(env.DB, request, ip);
   if (authResult instanceof Response) return authResult;
-  const { body } = authResult;
+  const { auth, body } = authResult;
 
   // Fetch existing review
   const existing = await env.DB.prepare(
     "SELECT * FROM reviews WHERE review_key = ?"
   )
     .bind(params.key)
-    .first<{ stages: string; rating: number | null; security_flag: number }>();
+    .first<{ stages: string; rating: number | null; security_flag: number; public_key: string | null }>();
 
   if (!existing) {
     return json({ error: "Review not found" }, 404);
+  }
+
+  // Ownership check: anonymous reviews (no public_key) are immutable.
+  // Signed reviews can only be updated by the same keypair.
+  if (!existing.public_key) {
+    return json({ error: "Anonymous reviews cannot be updated" }, 403);
+  }
+  if (auth.publicKey !== existing.public_key) {
+    return json({ error: "Review belongs to a different identity" }, 403);
+  }
+
+  // Validate rating if provided
+  const validatedRating = validateRating(body.rating);
+  if (validatedRating === "invalid") {
+    return json({ error: "rating must be an integer between 1 and 5" }, 400);
   }
 
   let stages = JSON.parse(existing.stages) as unknown[];
@@ -882,8 +914,7 @@ const updateReview: RouteHandler = async (request, env, params) => {
     });
   }
 
-  const rating =
-    body.rating !== undefined ? (body.rating as number) : existing.rating;
+  const rating = validatedRating !== null ? validatedRating : existing.rating;
   const securityFlag =
     body.security_flag !== undefined
       ? body.security_flag

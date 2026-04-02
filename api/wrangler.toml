@@ -6,8 +6,7 @@ workers_dev = true
 
 [vars]
 GITHUB_CLIENT_ID = "Ov23liMBuSxFKAi3NaXi"
-# ADMIN_SECRET is stored as a Worker secret (wrangler secret put ADMIN_SECRET)
-# For local dev/testing, set ADMIN_SECRET = "test-secret" here temporarily
+ADMIN_SECRET = "test-admin-secret-not-for-production"
 
 [[rules]]
 type = "Text"
