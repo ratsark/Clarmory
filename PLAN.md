@@ -23,10 +23,16 @@ a crowdsourced quality layer on top of existing registries.
 
 3. **Install** — Handle the mechanics of adding a skill to the current Claude Code
    environment. Installation targets follow Claude Code's native scoping:
-   - **Project-local**: `.claude/skills/<name>/SKILL.md` in the repo (shared with
-     collaborators via git)
-   - **Global/personal**: `~/.claude/skills/<name>/SKILL.md`
-   - **MCP servers**: `.mcp.json` (project) or `~/.mcp.json` (user)
+   - **Project-local** (strong default): `.claude/skills/<name>/SKILL.md` in the
+     repo. Preferred because project-local skills survive context compaction (loaded
+     by the framework from disk, not held in conversation history) and are shared
+     with collaborators via git.
+   - **Global/personal**: `~/.claude/skills/<name>/SKILL.md` — only when user
+     explicitly requests. After install, tell the user: "To activate, restart
+     Claude Code or run `/skills reload`."
+   - **MCP servers**: `.mcp.json` (project) or `~/.mcp.json` (user). Always
+     require a Claude Code restart. Write a brief note to `.claude/CLAUDE.md`
+     describing the server (survives compaction since CLAUDE.md is always loaded).
    User confirmation required (security boundary). The agent may apply modifications
    before installation, including reviewer-suggested improvements it finds compelling.
 
