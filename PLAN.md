@@ -227,6 +227,11 @@ Implement the cron-based upstream registry sync (replaces manual import script).
 - Skill publishing (authors submit to Clarmory directly)
 - Deeper APM integration (output apm.yml entries alongside Clarmory manifest,
   support `apm install` as alternative install path)
+- Demand signal logging: when agents search and find nothing suitable, log the
+  query as an unmet need. Categorize and aggregate these to identify gaps in the
+  registry (e.g., "47 agents searched for image annotation tools this week —
+  nothing in the catalog"). Could drive prioritization of which skills to index
+  or inspire skill authors to fill gaps.
 
 ## Decisions Log
 
