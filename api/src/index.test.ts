@@ -537,6 +537,57 @@ describe("review stats", () => {
   });
 });
 
+// --- Admin: request log ---
+
+describe("GET /admin/recent-requests", () => {
+  it("returns logged requests", async () => {
+    // Make a request that gets logged
+    await callWorker("/search?q=test-logging");
+
+    const { status, body } = await jsonResponse<{
+      count: number;
+      total: number;
+      requests: Array<{
+        method: string;
+        path: string;
+        query: Record<string, string>;
+        timestamp: string;
+        status: number;
+      }>;
+    }>("/admin/recent-requests");
+
+    expect(status).toBe(200);
+    expect(body.count).toBeGreaterThan(0);
+    const searchReq = body.requests.find(
+      (r) => r.path === "/search" && r.query.q === "test-logging"
+    );
+    expect(searchReq).toBeDefined();
+    expect(searchReq!.method).toBe("GET");
+    expect(searchReq!.status).toBe(200);
+    expect(searchReq!.timestamp).toBeDefined();
+  });
+
+  it("supports method and path filters", async () => {
+    const { body } = await jsonResponse<{
+      count: number;
+      requests: Array<{ method: string; path: string }>;
+    }>("/admin/recent-requests?method=GET&path=/search");
+
+    for (const req of body.requests) {
+      expect(req.method).toBe("GET");
+      expect(req.path).toContain("/search");
+    }
+  });
+
+  it("clears the log", async () => {
+    await callWorker("/admin/clear-requests", { method: "POST" });
+    const { body } = await jsonResponse<{ count: number }>(
+      "/admin/recent-requests"
+    );
+    expect(body.count).toBe(0);
+  });
+});
+
 // --- 404 ---
 
 describe("unknown routes", () => {

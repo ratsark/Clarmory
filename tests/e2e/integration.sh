@@ -80,6 +80,10 @@ assert_json_field_gt() {
   fi
 }
 
+urlencode() {
+  python3 -c "import urllib.parse; print(urllib.parse.quote('$1', safe=''))"
+}
+
 http_get() {
   local url="$1"
   local status body
@@ -152,7 +156,8 @@ else:
 " 2>/dev/null || echo "")
 
 if [ -n "$SKILL_ID" ]; then
-  pass "Extracted skill ID: $SKILL_ID"
+  SKILL_ID_ENC=$(urlencode "$SKILL_ID")
+  pass "Extracted skill ID: $SKILL_ID (encoded: $SKILL_ID_ENC)"
 else
   fail "Could not extract skill ID from search results"
   echo "FATAL: Cannot continue without a skill ID"
@@ -248,7 +253,7 @@ fi
 echo ""
 echo "--- 2. Skill Details ---"
 
-RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID")
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC")
 STATUS=$(echo "$RESPONSE" | head -n1)
 BODY=$(echo "$RESPONSE" | tail -n +2)
 
@@ -290,7 +295,7 @@ assert_status "404" "$STATUS" "GET /skills/:id returns 404 for unknown ID"
 echo ""
 echo "--- 3. Fetch Reviews ---"
 
-RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID/reviews")
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC/reviews")
 STATUS=$(echo "$RESPONSE" | head -n1)
 BODY=$(echo "$RESPONSE" | tail -n +2)
 
@@ -417,12 +422,11 @@ BODY=$(echo "$RESPONSE" | tail -n +2)
 
 assert_status "200" "$STATUS" "PATCH /reviews/:key (post_use) returns 200"
 
-# Verify stages now has 3 entries
+# API returns {review_key, stages_count} — verify count
 STAGE_COUNT=$(echo "$BODY" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-stages = d.get('stages', [])
-print(len(stages))
+print(d.get('stages_count', 0))
 " 2>/dev/null || echo "0")
 
 if [ "$STAGE_COUNT" = "3" ]; then
@@ -431,14 +435,25 @@ else
   fail "Expected 3 stages, got $STAGE_COUNT"
 fi
 
-# Verify rating was set
-RATING=$(echo "$BODY" | python3 -c "
+# Verify rating was persisted by fetching the review from the reviews list
+RESPONSE_CHECK=$(http_get "$API_URL/skills/$SKILL_ID_ENC/reviews")
+CHECK_BODY=$(echo "$RESPONSE_CHECK" | tail -n +2)
+
+PERSISTED_RATING=$(echo "$CHECK_BODY" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print(d.get('rating', ''))
+for r in d.get('reviews', []):
+    if r.get('review_key') == '$REVIEW_KEY':
+        print(r.get('rating', ''))
+        sys.exit(0)
+print('')
 " 2>/dev/null || echo "")
 
-assert_json_field "$BODY" "['rating']" "4" "Rating is 4 after post_use"
+if [ "$PERSISTED_RATING" = "4" ]; then
+  pass "Rating 4 persisted after post_use stage"
+else
+  fail "Expected persisted rating 4, got '$PERSISTED_RATING'"
+fi
 
 # -------------------------------------------------------
 # Test 7: PATCH nonexistent review returns 404
@@ -524,7 +539,7 @@ fi
 echo ""
 echo "--- 9. Verify Reviews in Skill Detail ---"
 
-RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID")
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC")
 STATUS=$(echo "$RESPONSE" | head -n1)
 BODY=$(echo "$RESPONSE" | tail -n +2)
 
@@ -549,7 +564,7 @@ fi
 echo ""
 echo "--- 10. Verify Review in Reviews List ---"
 
-RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID/reviews")
+RESPONSE=$(http_get "$API_URL/skills/$SKILL_ID_ENC/reviews")
 STATUS=$(echo "$RESPONSE" | head -n1)
 BODY=$(echo "$RESPONSE" | tail -n +2)
 

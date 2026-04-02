@@ -42,6 +42,37 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+// --- Request log (in-memory, for test observability) ---
+
+interface RequestLogEntry {
+  method: string;
+  path: string;
+  query: Record<string, string>;
+  timestamp: string;
+  status: number;
+}
+
+const MAX_LOG_ENTRIES = 100;
+const requestLog: RequestLogEntry[] = [];
+
+function logRequest(
+  method: string,
+  path: string,
+  query: Record<string, string>,
+  status: number
+) {
+  requestLog.push({
+    method,
+    path,
+    query,
+    timestamp: new Date().toISOString(),
+    status,
+  });
+  if (requestLog.length > MAX_LOG_ENTRIES) {
+    requestLog.splice(0, requestLog.length - MAX_LOG_ENTRIES);
+  }
+}
+
 // --- Helpers ---
 
 interface ReviewStatsRow {
@@ -506,12 +537,43 @@ const routes: Array<{
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const query = Object.fromEntries(url.searchParams.entries());
+
+    // Admin: recent requests log
+    if (url.pathname === "/admin/recent-requests") {
+      const limit = Math.min(
+        parseInt(url.searchParams.get("limit") || "50"),
+        MAX_LOG_ENTRIES
+      );
+      const method = url.searchParams.get("method");
+      const path = url.searchParams.get("path");
+
+      let entries = [...requestLog].reverse();
+      if (method) entries = entries.filter((e) => e.method === method.toUpperCase());
+      if (path) entries = entries.filter((e) => e.path.includes(path));
+
+      return json({
+        count: entries.slice(0, limit).length,
+        total: entries.length,
+        requests: entries.slice(0, limit),
+      });
+    }
+
+    // Admin: clear request log
+    if (url.pathname === "/admin/clear-requests" && request.method === "POST") {
+      requestLog.length = 0;
+      return json({ cleared: true });
+    }
+
     const match = matchRoute(request.method, url.pathname, routes);
 
     if (match) {
       try {
-        return await match.handler(request, env, match.params);
+        const response = await match.handler(request, env, match.params);
+        logRequest(request.method, url.pathname, query, response.status);
+        return response;
       } catch (err) {
+        logRequest(request.method, url.pathname, query, 500);
         const message = err instanceof Error ? err.message : "Unknown error";
         return json({ error: message }, 500);
       }
@@ -522,6 +584,7 @@ export default {
       return json({ status: "ok", service: "clarmory-api" });
     }
 
+    logRequest(request.method, url.pathname, query, 404);
     return json({ error: "Not found" }, 404);
   },
 };
