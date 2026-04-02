@@ -11,14 +11,165 @@
 -- Skills
 -- =============================================================================
 
-INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, metadata) VALUES
-
--- E2E test target: MQTT skill (must be the best match for the agent test prompt)
+-- E2E test target: MQTT skill with inline content (agent fetches via GET /skills/:id/content)
+INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, content, metadata) VALUES
 ('github:claudecode-contrib/mqtt-client-skill',
  'awesome-claude-code', 'MQTT Client',
  'MQTT publish/subscribe skill for IoT projects. Sets up an MQTT client that connects to a broker, subscribes to topics, publishes messages, and logs incoming data. Handles reconnection, QoS levels, and topic wildcards. Works with Mosquitto, HiveMQ, EMQX, and other standard brokers.',
- 'f1e2d3c4', 'https://github.com/claudecode-contrib/mqtt-client-skill', 'skill',
- '{"tags": ["mqtt", "iot", "messaging", "pubsub", "subscribe", "broker"], "author": "claudecode-contrib"}'),
+ 'f1e2d3c4', 'https://clarmory-api.ratsark.workers.dev/skills/github%3Aclaudecode-contrib%2Fmqtt-client-skill/content', 'skill',
+ '# MQTT Client Skill
+
+## What this skill does
+
+Sets up MQTT publish/subscribe clients for IoT and messaging projects. Handles
+broker connection, topic subscription, message publishing, and incoming message
+logging.
+
+## When to use
+
+- Setting up MQTT communication in IoT projects
+- Subscribing to topics and logging messages from sensors or devices
+- Publishing messages to MQTT brokers
+- Any project needing pub/sub messaging via MQTT
+
+## Instructions
+
+### Dependencies
+
+Install the MQTT client library for your language:
+
+**Node.js / TypeScript:**
+```bash
+npm install mqtt
+```
+
+**Python:**
+```bash
+pip install paho-mqtt
+```
+
+### Connecting to a broker
+
+Connect to the MQTT broker. Default port is 1883 (unencrypted) or 8883 (TLS).
+
+**Node.js:**
+```javascript
+const mqtt = require("mqtt");
+const client = mqtt.connect("mqtt://localhost:1883");
+
+client.on("connect", () => {
+  console.log("Connected to MQTT broker");
+});
+
+client.on("error", (err) => {
+  console.error("Connection error:", err.message);
+});
+```
+
+**Python:**
+```python
+import paho.mqtt.client as mqtt
+
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("Connected to MQTT broker")
+    else:
+        print(f"Connection failed with code {rc}")
+
+client = mqtt.Client()
+client.on_connect = on_connect
+client.connect("localhost", 1883, 60)
+```
+
+### Subscribing to topics
+
+Subscribe to one or more topics. Use wildcards for flexible matching:
+- `+` matches a single level: `sensors/+/temperature`
+- `#` matches multiple levels: `sensors/#`
+
+**Node.js:**
+```javascript
+client.subscribe("sensors/#", { qos: 1 }, (err) => {
+  if (err) console.error("Subscribe error:", err);
+});
+
+client.on("message", (topic, message) => {
+  console.log(`[${topic}] ${message.toString()}`);
+});
+```
+
+**Python:**
+```python
+def on_message(client, userdata, msg):
+    print(f"[{msg.topic}] {msg.payload.decode()}")
+
+client.on_message = on_message
+client.subscribe("sensors/#", qos=1)
+client.loop_forever()
+```
+
+### Publishing messages
+
+```javascript
+client.publish("sensors/temperature", JSON.stringify({ value: 22.5, unit: "C" }), { qos: 1 });
+```
+
+### QoS levels
+
+- **QoS 0**: At most once (fire and forget)
+- **QoS 1**: At least once (acknowledged delivery)
+- **QoS 2**: Exactly once (four-part handshake)
+
+Use QoS 1 for most cases. QoS 2 is slower but guarantees no duplicates.
+
+### Reconnection
+
+Most MQTT libraries handle reconnection automatically. Configure reconnect
+options for reliability:
+
+```javascript
+const client = mqtt.connect("mqtt://localhost:1883", {
+  reconnectPeriod: 5000,
+  connectTimeout: 30000,
+});
+```
+
+### Broker compatibility
+
+Works with any MQTT 3.1.1 or 5.0 broker:
+- **Mosquitto** (local, lightweight)
+- **HiveMQ** (cloud or self-hosted)
+- **EMQX** (high-performance, clustered)
+- **AWS IoT Core** (managed, requires TLS + certs)
+
+### Common patterns
+
+**Message logger:**
+```javascript
+const fs = require("fs");
+client.on("message", (topic, message) => {
+  const entry = `${new Date().toISOString()} [${topic}] ${message.toString()}\n`;
+  fs.appendFileSync("mqtt_log.txt", entry);
+  console.log(entry.trim());
+});
+```
+
+**Structured sensor data:**
+```javascript
+client.on("message", (topic, message) => {
+  try {
+    const data = JSON.parse(message.toString());
+    console.log(`Sensor ${topic}: ${data.value}${data.unit}`);
+  } catch {
+    console.log(`Raw message on ${topic}: ${message.toString()}`);
+  }
+});
+```
+',
+ '{"tags": ["mqtt", "iot", "messaging", "pubsub", "subscribe", "broker"], "author": "claudecode-contrib"}');
+
+-- Remaining skills (no inline content — fetched from upstream source_url)
+INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, metadata) VALUES
 
 -- Skills (SKILL.md files)
 ('github:trailofbits/skills/security-audit',

@@ -388,6 +388,29 @@ const getSkill: RouteHandler = async (_request, env, params) => {
   });
 };
 
+const getSkillContent: RouteHandler = async (_request, env, params) => {
+  const skill = await env.DB.prepare("SELECT id, name, content, source_url FROM skills WHERE id = ?")
+    .bind(params.id)
+    .first<{ id: string; name: string; content: string | null; source_url: string }>();
+
+  if (!skill) {
+    return json({ error: "Skill not found" }, 404);
+  }
+
+  if (!skill.content) {
+    return json({
+      error: "No inline content available",
+      source_url: skill.source_url,
+      hint: "Fetch content directly from source_url",
+    }, 404);
+  }
+
+  return new Response(skill.content, {
+    status: 200,
+    headers: { "Content-Type": "text/markdown; charset=utf-8" },
+  });
+};
+
 const getSkillReviews: RouteHandler = async (request, env, params) => {
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
@@ -576,6 +599,7 @@ const routes: Array<{
 }> = [
   { method: "GET", pattern: "/search", handler: searchSkills },
   { method: "GET", pattern: "/skills/:id", handler: getSkill },
+  { method: "GET", pattern: "/skills/:id/content", handler: getSkillContent },
   { method: "GET", pattern: "/skills/:id/reviews", handler: getSkillReviews },
   { method: "POST", pattern: "/reviews", handler: createReview },
   { method: "PATCH", pattern: "/reviews/:key", handler: updateReview },

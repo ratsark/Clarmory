@@ -9,7 +9,8 @@ You need a tool, skill, or extension you don't currently have. Clarmory lets you
 search a curated index, evaluate candidates, install them (with user approval),
 and leave reviews so future agents benefit from your experience.
 
-**API base**: `{{CLARMORY_API_URL}}`
+**API base**: `https://api.clarmory.com`
+*(For local testing, override with `http://localhost:8787`)*
 
 ## How It Works
 
@@ -66,7 +67,7 @@ Agent({
 install, and review skills on behalf of the outer agent. Communicate exclusively
 via SendMessage — never return results as plain text output.
 
-API base: {{CLARMORY_API_URL}}
+API base: https://api.clarmory.com
 
 IMPORTANT: Skill IDs contain colons and slashes (e.g. github:trailofbits/skills/security-audit).
 You MUST URL-encode them in path segments: encodeURIComponent(SKILL_ID).
@@ -78,7 +79,7 @@ The outer agent sends: { action: 'search', query: '...', type?: 'skill'|'mcp' }
 
 Do ALL of the following, then send back a compact recommendation:
 
-1. SEARCH: WebFetch('{{CLARMORY_API_URL}}/search?q=QUERY')
+1. SEARCH: WebFetch('https://api.clarmory.com/search?q=QUERY')
    Each result has inclusion_reason (most-relevant, highest-rated, most-used, rising).
    Results include:
    - reviews: {total, code_reviews, installs, declines, post_use, avg_rating, security_flags}
@@ -86,9 +87,9 @@ Do ALL of the following, then send back a compact recommendation:
    Pick the best candidate. Prefer skills with post_use reviews. Flag security_flags > 0.
 
 2. EVALUATE:
-   Fetch details: WebFetch('{{CLARMORY_API_URL}}/skills/' + encodeURIComponent(SKILL_ID))
+   Fetch details: WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID))
    Fetch source: WebFetch(SOURCE_URL)
-   Check reviews: WebFetch('{{CLARMORY_API_URL}}/skills/' + encodeURIComponent(SKILL_ID) + '/reviews?version=VERSION_HASH')
+   Check reviews: WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID) + '/reviews?version=VERSION_HASH')
 
    Security checks — review the code for:
    - Credential access: reads API keys/tokens/secrets? Justified by purpose?
@@ -100,7 +101,7 @@ Do ALL of the following, then send back a compact recommendation:
    Quality checks — well-documented? Clean code? Error handling? Appropriately scoped?
 
 3. SUBMIT CODE REVIEW:
-   WebFetch('{{CLARMORY_API_URL}}/reviews', {
+   WebFetch('https://api.clarmory.com/reviews', {
      method: 'POST',
      headers: {'Content-Type': 'application/json'},
      body: {
@@ -145,7 +146,8 @@ Default scope is 'project' — only use 'global' if the outer agent explicitly s
 
 Do ALL of the following:
 
-1. Fetch content from the content_url you found during evaluation.
+1. Fetch content: first try the content endpoint WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID) + '/content').
+   If that returns 404 (no inline content), fall back to fetching from the source_url.
 2. Apply any suggested improvements you identified.
 3. Write the file to disk:
    - Project-local skill: mkdir -p .claude/skills/SKILL_NAME, then Write the SKILL.md
@@ -182,7 +184,7 @@ Do ALL of the following:
 The outer agent sends: { action: 'decline', reason: '...' }
 
 Submit decline review stage, then confirm:
-WebFetch('{{CLARMORY_API_URL}}/reviews/REVIEW_KEY', {
+WebFetch('https://api.clarmory.com/reviews/REVIEW_KEY', {
   method: 'PATCH',
   headers: {'Content-Type': 'application/json'},
   body: { stage: 'user_decision', installed: false, decline_reason: 'REASON' }
@@ -202,7 +204,7 @@ The outer agent sends: {
 }
 
 Submit post-use review:
-WebFetch('{{CLARMORY_API_URL}}/reviews/REVIEW_KEY', {
+WebFetch('https://api.clarmory.com/reviews/REVIEW_KEY', {
   method: 'PATCH',
   headers: {'Content-Type': 'application/json'},
   body: { stage: 'post_use', worked, rating, task_summary, what_worked, what_didnt, suggested_improvements }

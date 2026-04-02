@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS skills (
   version_hash TEXT,                -- content hash for version identity
   source_url TEXT NOT NULL,         -- where to fetch the skill from
   install_type TEXT NOT NULL DEFAULT 'skill',  -- skill | mcp-local | mcp-hosted
+  content TEXT,                      -- optional inline skill content (for self-contained skills without upstream)
   metadata TEXT DEFAULT '{}',       -- JSON blob for source-specific extras
   indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

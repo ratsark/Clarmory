@@ -257,6 +257,42 @@ describe("GET /skills/:id", () => {
   });
 });
 
+// --- Get Skill Content ---
+
+describe("GET /skills/:id/content", () => {
+  it("returns markdown content for skill with inline content", async () => {
+    const response = await callWorker(
+      `/skills/${encodeURIComponent("github:claudecode-contrib/mqtt-client-skill")}/content`
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/markdown");
+    const text = await response.text();
+    expect(text).toContain("# MQTT Client Skill");
+    expect(text).toContain("mqtt");
+  });
+
+  it("returns 404 with source_url hint for skill without inline content", async () => {
+    const { status, body } = await jsonResponse<{
+      error: string;
+      source_url: string;
+      hint: string;
+    }>(
+      `/skills/${encodeURIComponent("github:trailofbits/skills/security-audit")}/content`
+    );
+    expect(status).toBe(404);
+    expect(body.error).toContain("No inline content");
+    expect(body.source_url).toBeDefined();
+    expect(body.hint).toBeDefined();
+  });
+
+  it("returns 404 for nonexistent skill", async () => {
+    const { status } = await jsonResponse(
+      `/skills/${encodeURIComponent("github:nonexistent/skill")}/content`
+    );
+    expect(status).toBe(404);
+  });
+});
+
 // --- Get Skill Reviews ---
 
 describe("GET /skills/:id/reviews", () => {

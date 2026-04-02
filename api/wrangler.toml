@@ -2,6 +2,7 @@ name = "clarmory-api"
 main = "src/index.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 [[rules]]
 type = "Text"
@@ -11,4 +12,8 @@ fallthrough = false
 [[d1_databases]]
 binding = "DB"
 database_name = "clarmory-db"
-database_id = "local"  # placeholder — replace with real ID after `wrangler d1 create`
+database_id = "0847be30-4850-4f64-8d8c-bdbeadb52e51"
+
+[[routes]]
+pattern = "api.clarmory.com"
+custom_domain = true

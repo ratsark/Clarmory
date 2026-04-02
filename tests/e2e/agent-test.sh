@@ -14,8 +14,10 @@
 #   ./tests/e2e/agent-test.sh
 #
 # Options:
-#   --keep-temp    Don't remove the temp project dir on exit (for debugging)
+#   --keep-temp      Don't remove the temp project dir on exit (for debugging)
 #   --skip-wrangler  Assume wrangler dev is already running on localhost:8787
+#   --live URL       Run against a production API (Layer 3b canary mode).
+#                    Skips wrangler lifecycle and DB seeding.
 
 set -euo pipefail
 
@@ -25,15 +27,27 @@ API_DIR="$PROJECT_ROOT/api"
 API_URL="http://localhost:8787"
 KEEP_TEMP=false
 SKIP_WRANGLER=false
+LIVE_MODE=false
 WRANGLER_PID=""
 TEMP_DIR=""
 
 # --- Parse args ---
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --keep-temp) KEEP_TEMP=true ;;
     --skip-wrangler) SKIP_WRANGLER=true ;;
+    --live)
+      LIVE_MODE=true
+      SKIP_WRANGLER=true
+      shift
+      if [ $# -eq 0 ]; then
+        echo "ERROR: --live requires a URL argument"
+        exit 1
+      fi
+      API_URL="$1"
+      ;;
   esac
+  shift
 done
 
 # --- Cleanup ---
@@ -87,8 +101,13 @@ wait_for_api() {
   return 1
 }
 
-echo "=== Clarmory Layer 3a: Agent-in-the-Loop Test ==="
+if [ "$LIVE_MODE" = "true" ]; then
+  echo "=== Clarmory Layer 3b: Live Production Canary Test ==="
+else
+  echo "=== Clarmory Layer 3a: Agent-in-the-Loop Test ==="
+fi
 echo "Project root: $PROJECT_ROOT"
+echo "API URL: $API_URL"
 echo ""
 
 # -------------------------------------------------------
@@ -127,18 +146,32 @@ else
 fi
 
 # -------------------------------------------------------
-# Step 2: Seed the database
+# Step 2: Seed the database (skip in live mode)
 # -------------------------------------------------------
 echo ""
 echo "--- Step 2: Seed Database ---"
 
-cd "$API_DIR"
-if npm run db:init 2>&1; then
-  echo "  Database seeded successfully"
+if [ "$LIVE_MODE" = "true" ]; then
+  echo "  Skipping DB seed (live mode — using production data)"
 else
-  echo "  WARNING: db:init returned non-zero (may be OK if tables exist)"
+  echo "  Seeding via POST $API_URL/admin/seed ..."
+  SEED_RESULT=$(curl -s -X POST "$API_URL/admin/seed")
+  SEED_OK=$(echo "$SEED_RESULT" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print('true' if d.get('seeded') else 'false')
+except:
+    print('false')
+" 2>/dev/null || echo "false")
+
+  if [ "$SEED_OK" = "true" ]; then
+    echo "  Database seeded successfully via API"
+  else
+    echo "  ERROR: Seeding via API failed: $SEED_RESULT"
+    exit 1
+  fi
 fi
-cd "$PROJECT_ROOT"
 
 # Verify seed data is queryable
 SEED_CHECK=$(curl -s "$API_URL/search?q=security" | python3 -c "
@@ -209,10 +242,71 @@ echo "--- Step 4: Install Clarmory Skill ---"
 SKILL_DIR="$TEMP_DIR/.claude/skills/clarmory"
 mkdir -p "$SKILL_DIR"
 
-# Copy SKILL.md and replace the API URL placeholder with our local API
-sed "s|{{CLARMORY_API_URL}}|$API_URL|g" \
-  "$PROJECT_ROOT/skills/clarmory/SKILL.md" \
-  > "$SKILL_DIR/SKILL.md"
+# Create a test-compatible SKILL.md that works in single-turn (-p) mode.
+# The production SKILL.md uses a subagent pattern (Agent + SendMessage) which
+# isn't available in claude -p. This inline version tells the agent to make
+# the API calls directly.
+cat > "$SKILL_DIR/SKILL.md" << SKILLEOF
+---
+description: "Find, evaluate, install, and review Claude Code skills and extensions."
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch
+---
+
+# Clarmory — Skill Discovery and Installation
+
+Search the Clarmory API to find skills, install them, and submit reviews.
+
+**API base**: $API_URL
+
+## Searching
+
+Use WebFetch or curl to search:
+
+    WebFetch('$API_URL/search?q=QUERY')
+
+Results include skill IDs, descriptions, ratings, and version info.
+
+## Evaluating
+
+Fetch details:
+
+    WebFetch('$API_URL/skills/' + encodeURIComponent(SKILL_ID))
+
+Fetch reviews:
+
+    WebFetch('$API_URL/skills/' + encodeURIComponent(SKILL_ID) + '/reviews')
+
+IMPORTANT: Skill IDs contain colons and slashes (e.g. github:user/repo/path).
+You MUST URL-encode them in path segments.
+
+## Installing
+
+1. Try the content endpoint first:
+   WebFetch('$API_URL/skills/' + encodeURIComponent(SKILL_ID) + '/content')
+   If 404, fetch from the source_url in the skill detail.
+
+2. Write the skill to .claude/skills/SKILL_NAME/SKILL.md
+
+3. Update manifest at ~/.claude/clarmory/installed.json:
+   - mkdir -p ~/.claude/clarmory
+   - Read existing or start with {"installed": []}
+   - Append: {id, name, source_url, version_hash, installed_at, scope: "project", path, review_key}
+   - Write back
+
+## Submitting Reviews
+
+Create a code review:
+
+    curl -s -X POST '$API_URL/reviews' \\
+      -H 'Content-Type: application/json' \\
+      -d '{"agent_id":"test-agent","extension_id":"SKILL_ID","version_hash":"VERSION_HASH","stage":"code_review","security_ok":true,"quality_rating":4,"summary":"..."}'
+
+Save the returned review_key. Then submit post-use review:
+
+    curl -s -X PATCH '$API_URL/reviews/REVIEW_KEY' \\
+      -H 'Content-Type: application/json' \\
+      -d '{"stage":"post_use","worked":true,"rating":4,"task_summary":"...","what_worked":"...","what_didnt":"none"}'
+SKILLEOF
 
 # Create a CLAUDE.md that references the skill
 cat > "$TEMP_DIR/.claude/CLAUDE.md" << 'EOF'
@@ -233,7 +327,16 @@ echo "  API URL configured: $API_URL"
 echo ""
 echo "--- Step 5: Run Agent Session ---"
 
-TEST_PROMPT="Set up an MQTT client in this project that subscribes to a topic and logs messages. Use Clarmory to find a suitable skill or extension that can help. You have pre-approval to install any skill you find — do not ask for confirmation, just install it. After installing, write the MQTT client code following the skill's guidance, then submit a post-use review to Clarmory."
+TEST_PROMPT="Set up an MQTT client in this project that subscribes to a topic and logs messages.
+
+Use the Clarmory skill (see .claude/skills/clarmory/SKILL.md) to:
+1. Search the Clarmory API for an MQTT-related skill
+2. Evaluate the best result — check its details and reviews
+3. Install it (you have pre-approval — do not ask for confirmation)
+4. Write the MQTT client code following the skill's guidance
+5. Submit both a code_review and a post_use review to the Clarmory API
+
+Make all API calls directly using WebFetch or curl. Do NOT try to spawn subagents or use SendMessage."
 
 echo "  Prompt: $TEST_PROMPT"
 echo "  Starting claude -p session..."
@@ -249,7 +352,7 @@ AGENT_OUTPUT_FILE="$TEMP_DIR/.agent-output.txt"
 # Timeout after 5 minutes — if the agent hasn't finished by then, something
 # is wrong. On the Pi with 4GB RAM, agent sessions can be slow.
 # Run from the temp dir so claude discovers .claude/CLAUDE.md and skills
-if (cd "$TEMP_DIR" && timeout 300 claude -p \
+if (cd "$TEMP_DIR" && timeout 480 claude -p \
   --dangerously-skip-permissions \
   --output-format text \
   --model sonnet \
@@ -259,7 +362,7 @@ if (cd "$TEMP_DIR" && timeout 300 claude -p \
 else
   EXIT_CODE=$?
   if [ $EXIT_CODE -eq 124 ]; then
-    echo "  WARNING: Agent session timed out after 5 minutes"
+    echo "  WARNING: Agent session timed out after 8 minutes"
   else
     echo "  WARNING: Agent session exited with code $EXIT_CODE"
   fi
@@ -281,7 +384,7 @@ echo ""
 # We verify by checking if the API has any reviews (the agent should have
 # created one), or by checking the agent output for search-related content.
 echo "  (a) Searched:"
-SEARCHED=$(grep -ci "search\|/search\|results\|clarmory" "$AGENT_OUTPUT_FILE" 2>/dev/null || echo "0")
+SEARCHED=$(grep -iE "search|/search|results|clarmory" "$AGENT_OUTPUT_FILE" 2>/dev/null | wc -l)
 if [ "$SEARCHED" -gt 0 ]; then
   checkpoint_pass "Agent output contains search-related content ($SEARCHED mentions)"
 else
@@ -292,7 +395,7 @@ fi
 echo ""
 echo "  (b) Discovered:"
 # Look for evidence the agent identified a specific skill from search results
-DISCOVERED=$(grep -ci "mqtt\|security\|skill\|install\|found" "$AGENT_OUTPUT_FILE" 2>/dev/null || echo "0")
+DISCOVERED=$(grep -iE "mqtt|security|skill|install|found" "$AGENT_OUTPUT_FILE" 2>/dev/null | wc -l)
 if [ "$DISCOVERED" -gt 0 ]; then
   checkpoint_pass "Agent output shows skill discovery ($DISCOVERED mentions)"
 else
@@ -434,8 +537,13 @@ fi
 # -------------------------------------------------------
 TOTAL=$((PASS + FAIL))
 echo ""
+if [ "$LIVE_MODE" = "true" ]; then
+  LAYER="Layer 3b Live Production Canary"
+else
+  LAYER="Layer 3a Agent-in-the-Loop"
+fi
 echo "==========================================="
-echo "  Layer 3a Agent-in-the-Loop Test Results"
+echo "  $LAYER Test Results"
 echo "  PASSED: $PASS / $TOTAL checkpoints"
 echo "  FAILED: $FAIL / $TOTAL checkpoints"
 echo "==========================================="

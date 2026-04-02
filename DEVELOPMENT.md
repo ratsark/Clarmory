@@ -23,6 +23,9 @@ npm test                    # Vitest against local D1
 ./tests/e2e/agent-test.sh           # Full lifecycle: search, install, use, review
 ./tests/e2e/agent-test.sh --keep-temp      # Preserve temp dir for debugging
 ./tests/e2e/agent-test.sh --skip-wrangler  # Use already-running wrangler dev
+
+# Layer 3b: Live production canary
+./tests/e2e/agent-test.sh --live URL       # Run against production API
 ```
 
 ## Run
@@ -49,6 +52,7 @@ All routes return JSON. Skill IDs must be URL-encoded in path parameters
 |--------|------|-------------|
 | GET | `/search?q=...&limit=20` | FTS search over skills, enriched with review stats |
 | GET | `/skills/:id` | Skill metadata + per-version review stats |
+| GET | `/skills/:id/content` | Inline skill content (markdown), or 404 with source_url hint |
 | GET | `/skills/:id/reviews` | Paginated reviews for a skill |
 | POST | `/reviews` | Create a review (returns `review_key`) |
 | PATCH | `/reviews/:key` | Append a stage to an existing review |
