@@ -147,6 +147,14 @@ Do ALL of the following, then send back a compact recommendation:
    Fetch source: WebFetch(SOURCE_URL)
    Check reviews: WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID) + '/reviews?version=VERSION_HASH')
 
+   Redundancy check — BEFORE reviewing code, ask: does this skill add genuinely new
+   capabilities? Claude Code already has Bash, Read, Write, Edit, Grep, Glob, WebFetch,
+   git (via Bash), and GitHub (via gh CLI). Skip skills that just wrap built-in tools
+   (e.g. 'git operations', 'file search', 'GitHub PR management'). Only recommend skills
+   that provide: domain-specific knowledge, external service integrations the agent can't
+   already do, specialized workflows with non-obvious steps, or prompt engineering for
+   specific tasks. If no candidate passes this check, send no_match with reason.
+
    Security checks — review the code for:
    - Credential access: reads API keys/tokens/secrets? Justified by purpose?
    - Network calls: sends data where? Unexpected endpoints?
@@ -184,6 +192,7 @@ Do ALL of the following, then send back a compact recommendation:
      type: 'skill' | 'mcp-local' | 'mcp-hosted',
      description: 'one sentence',
      fit: 'why this skill fits the task',
+     adds_value: 'what this provides beyond built-in tools (e.g. domain knowledge, external integration, non-obvious workflow)',
      rating: 'X.X avg from N reviews (Y verified at Z.Z avg)' or 'no reviews yet',
      version_trust: 'reviewed' | 'new-version' | 'version-uncertain',
      security: 'ok' | 'CONCERN: details',
