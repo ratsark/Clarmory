@@ -3,6 +3,8 @@ import seedSQL from "../scripts/seed.sql";
 
 export interface Env {
   DB: D1Database;
+  GITHUB_CLIENT_ID: string;
+  GITHUB_CLIENT_SECRET: string;
 }
 
 type RouteHandler = (
@@ -120,6 +122,280 @@ function splitStatements(sql: string): string[] {
   return statements;
 }
 
+// --- Auth helpers ---
+
+// Check IP rate limit. Returns true if within limit, false if exceeded.
+async function checkRateLimit(
+  db: D1Database,
+  ip: string,
+  action: string,
+  windowFn: () => string,
+  maxCount: number
+): Promise<boolean> {
+  const window = windowFn();
+  const row = await db
+    .prepare(
+      "SELECT count FROM rate_limits WHERE ip = ? AND action = ? AND window = ?"
+    )
+    .bind(ip, action, window)
+    .first<{ count: number }>();
+
+  if (row && row.count >= maxCount) return false;
+
+  await db
+    .prepare(
+      `INSERT INTO rate_limits (ip, action, window, count)
+       VALUES (?, ?, ?, 1)
+       ON CONFLICT(ip, action, window) DO UPDATE SET count = count + 1`
+    )
+    .bind(ip, action, window)
+    .run();
+
+  return true;
+}
+
+function hourWindow(): string {
+  return new Date().toISOString().slice(0, 13); // "2026-04-02T14"
+}
+
+function dayWindow(): string {
+  return new Date().toISOString().slice(0, 10); // "2026-04-02"
+}
+
+function getClientIp(request: Request): string {
+  return (
+    request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+// --- Ed25519 signature verification ---
+
+// Verify an Ed25519 signature over the request body.
+// Agent sends: X-Clarmory-Public-Key (base64), X-Clarmory-Signature (base64)
+// The signed payload is the raw request body bytes.
+async function verifySignature(
+  publicKeyB64: string,
+  signatureB64: string,
+  bodyBytes: Uint8Array
+): Promise<boolean> {
+  try {
+    const publicKeyBytes = Uint8Array.from(atob(publicKeyB64), (c) =>
+      c.charCodeAt(0)
+    );
+    const signatureBytes = Uint8Array.from(atob(signatureB64), (c) =>
+      c.charCodeAt(0)
+    );
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      publicKeyBytes,
+      { name: "Ed25519" },
+      false,
+      ["verify"]
+    );
+
+    return await crypto.subtle.verify("Ed25519", key, signatureBytes, bodyBytes);
+  } catch {
+    return false;
+  }
+}
+
+interface AuthResult {
+  publicKey: string;
+  trustLevel: "anonymous" | "github_verified";
+}
+
+// Authenticate a review request. Returns identity info or null.
+// Reads the body as bytes for signature verification, then parses as JSON.
+async function authenticateReview(
+  db: D1Database,
+  request: Request,
+  ip: string
+): Promise<{ auth: AuthResult; body: Record<string, unknown> } | Response> {
+  const bodyBytes = new Uint8Array(await request.arrayBuffer());
+  const bodyText = new TextDecoder().decode(bodyBytes);
+  const body = JSON.parse(bodyText) as Record<string, unknown>;
+
+  const publicKeyB64 = request.headers.get("x-clarmory-public-key");
+  const signatureB64 = request.headers.get("x-clarmory-signature");
+
+  if (!publicKeyB64 || !signatureB64) {
+    return json(
+      {
+        error:
+          "Signature required. Include X-Clarmory-Public-Key and X-Clarmory-Signature headers.",
+      },
+      401
+    );
+  }
+
+  const valid = await verifySignature(publicKeyB64, signatureB64, bodyBytes);
+  if (!valid) {
+    return json({ error: "Invalid signature" }, 401);
+  }
+
+  // Look up or auto-register identity
+  let identity = await db
+    .prepare("SELECT public_key, trust_level FROM identities WHERE public_key = ?")
+    .bind(publicKeyB64)
+    .first<{ public_key: string; trust_level: string }>();
+
+  if (!identity) {
+    await db
+      .prepare(
+        "INSERT INTO identities (public_key, trust_level, ip_address) VALUES (?, 'anonymous', ?)"
+      )
+      .bind(publicKeyB64, ip)
+      .run();
+    identity = { public_key: publicKeyB64, trust_level: "anonymous" };
+  }
+
+  return {
+    auth: {
+      publicKey: publicKeyB64,
+      trustLevel: identity.trust_level as "anonymous" | "github_verified",
+    },
+    body,
+  };
+}
+
+// --- GitHub OAuth device flow endpoints ---
+
+const githubDeviceCode: RouteHandler = async (_request, env) => {
+  // Start the GitHub device flow using server-side client_id
+  const ghResponse = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      client_id: env.GITHUB_CLIENT_ID,
+      scope: "read:user",
+    }),
+  });
+
+  const ghBody = await ghResponse.json();
+  return json(ghBody, ghResponse.status);
+};
+
+// Exchange a device code for an access token (server-side, uses client_secret)
+const githubToken: RouteHandler = async (request, env) => {
+  const body = (await request.json()) as Record<string, unknown>;
+  const deviceCode = body.device_code as string | undefined;
+
+  if (!deviceCode) {
+    return json({ error: "device_code is required" }, 400);
+  }
+
+  const ip = getClientIp(request);
+  const allowed = await checkRateLimit(env.DB, ip, "github_auth", hourWindow, 10);
+  if (!allowed) {
+    return json({ error: "GitHub auth rate limit exceeded" }, 429);
+  }
+
+  const ghResponse = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      client_id: env.GITHUB_CLIENT_ID,
+      client_secret: env.GITHUB_CLIENT_SECRET,
+      device_code: deviceCode,
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    }),
+  });
+
+  const ghBody = await ghResponse.json();
+  return json(ghBody, ghResponse.status);
+};
+
+const linkGithub: RouteHandler = async (request, env) => {
+  const ip = getClientIp(request);
+
+  // Rate limit GitHub auth attempts
+  const allowed = await checkRateLimit(env.DB, ip, "github_auth", hourWindow, 10);
+  if (!allowed) {
+    return json({ error: "GitHub auth rate limit exceeded" }, 429);
+  }
+
+  // Read body as bytes for signature verification, then parse
+  const bodyBytes = new Uint8Array(await request.arrayBuffer());
+  const bodyText = new TextDecoder().decode(bodyBytes);
+  const body = JSON.parse(bodyText) as Record<string, unknown>;
+
+  const githubToken = body.github_token as string | undefined;
+  const publicKeyB64 = body.public_key as string | undefined;
+  const signatureB64 = request.headers.get("x-clarmory-signature");
+
+  if (!githubToken || !publicKeyB64 || !signatureB64) {
+    return json(
+      { error: "github_token, public_key, and X-Clarmory-Signature header are required" },
+      400
+    );
+  }
+
+  // Verify the signature over the request body to prove keypair ownership
+  const valid = await verifySignature(publicKeyB64, signatureB64, bodyBytes);
+  if (!valid) {
+    return json({ error: "Invalid signature — cannot prove keypair ownership" }, 401);
+  }
+
+  // Validate the GitHub token against GitHub's API
+  const ghResponse = await fetch("https://api.github.com/user", {
+    headers: {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "Clarmory-API/1.0",
+    },
+  });
+
+  if (!ghResponse.ok) {
+    return json({ error: "Invalid GitHub token" }, 401);
+  }
+
+  const ghUser = (await ghResponse.json()) as { login: string };
+  const githubUsername = ghUser.login;
+
+  // Update or create the identity with GitHub verification
+  const existing = await env.DB.prepare(
+    "SELECT public_key FROM identities WHERE public_key = ?"
+  )
+    .bind(publicKeyB64)
+    .first();
+
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE identities SET github_username = ?, trust_level = 'github_verified' WHERE public_key = ?"
+    )
+      .bind(githubUsername, publicKeyB64)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO identities (public_key, github_username, trust_level, ip_address) VALUES (?, ?, 'github_verified', ?)"
+    )
+      .bind(publicKeyB64, githubUsername, ip)
+      .run();
+  }
+
+  // Retroactive upgrade: update trust_level on ALL past reviews from this keypair
+  await env.DB.prepare(
+    "UPDATE reviews SET trust_level = 'github_verified' WHERE public_key = ?"
+  )
+    .bind(publicKeyB64)
+    .run();
+
+  return json({
+    verified: true,
+    github_username: githubUsername,
+    trust_level: "github_verified",
+  });
+};
+
 // --- Helpers ---
 
 interface ReviewStatsRow {
@@ -128,6 +404,9 @@ interface ReviewStatsRow {
   review_count: number;
   rated_count: number;
   avg_rating: number | null;
+  verified_count: number;
+  verified_rated_count: number;
+  verified_avg_rating: number | null;
   security_flags: number;
   code_reviews: number;
   decline_count: number;
@@ -156,6 +435,8 @@ function buildReviewsSummary(stats: ReviewStatsRow | null) {
       declines: 0,
       post_use: 0,
       avg_rating: null,
+      verified_count: 0,
+      verified_avg_rating: null,
       security_flags: 0,
     };
   }
@@ -166,6 +447,8 @@ function buildReviewsSummary(stats: ReviewStatsRow | null) {
     declines: stats.decline_count,
     post_use: stats.post_use_reviews,
     avg_rating: stats.avg_rating,
+    verified_count: stats.verified_count,
+    verified_avg_rating: stats.verified_avg_rating,
     security_flags: stats.security_flags,
   };
 }
@@ -446,7 +729,18 @@ const getSkillReviews: RouteHandler = async (request, env, params) => {
 };
 
 const createReview: RouteHandler = async (request, env) => {
-  const body = (await request.json()) as Record<string, unknown>;
+  const ip = getClientIp(request);
+
+  // Rate limit: max 30 reviews per IP per hour
+  const allowed = await checkRateLimit(env.DB, ip, "review", hourWindow, 30);
+  if (!allowed) {
+    return json({ error: "Review rate limit exceeded (max 30 per hour)" }, 429);
+  }
+
+  // Authenticate via Ed25519 signature
+  const authResult = await authenticateReview(env.DB, request, ip);
+  if (authResult instanceof Response) return authResult;
+  const { auth, body } = authResult;
 
   const agentId = body.agent_id as string | undefined;
   // Accept both skill_id and extension_id (SKILL.md uses extension_id)
@@ -501,8 +795,8 @@ const createReview: RouteHandler = async (request, env) => {
   const effectiveRating = rating ?? qualityRating ?? null;
 
   await env.DB.prepare(`
-    INSERT INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag, trust_level, public_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       reviewKey,
@@ -511,15 +805,22 @@ const createReview: RouteHandler = async (request, env) => {
       versionHash || null,
       stages,
       effectiveRating,
-      securityFlag ? 1 : 0
+      securityFlag ? 1 : 0,
+      auth.trustLevel,
+      auth.publicKey
     )
     .run();
 
-  return json({ review_key: reviewKey, created: true }, 201);
+  return json({ review_key: reviewKey, created: true, trust_level: auth.trustLevel }, 201);
 };
 
 const updateReview: RouteHandler = async (request, env, params) => {
-  const body = (await request.json()) as Record<string, unknown>;
+  const ip = getClientIp(request);
+
+  // Authenticate via Ed25519 signature
+  const authResult = await authenticateReview(env.DB, request, ip);
+  if (authResult instanceof Response) return authResult;
+  const { body } = authResult;
 
   // Fetch existing review
   const existing = await env.DB.prepare(
@@ -597,6 +898,9 @@ const routes: Array<{
   pattern: string;
   handler: RouteHandler;
 }> = [
+  { method: "POST", pattern: "/auth/github/device", handler: githubDeviceCode },
+  { method: "POST", pattern: "/auth/github/token", handler: githubToken },
+  { method: "POST", pattern: "/auth/link-github", handler: linkGithub },
   { method: "GET", pattern: "/search", handler: searchSkills },
   { method: "GET", pattern: "/skills/:id", handler: getSkill },
   { method: "GET", pattern: "/skills/:id/content", handler: getSkillContent },
@@ -647,6 +951,8 @@ export default {
         await env.DB.exec("DROP TABLE IF EXISTS skills_fts");
         await env.DB.exec("DROP TABLE IF EXISTS reviews");
         await env.DB.exec("DROP TABLE IF EXISTS skills");
+        await env.DB.exec("DROP TABLE IF EXISTS identities");
+        await env.DB.exec("DROP TABLE IF EXISTS rate_limits");
 
         // Apply schema and seed
         const allSQL = schemaSQL + "\n" + seedSQL;

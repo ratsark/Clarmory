@@ -48,15 +48,26 @@ npx wrangler deploy         # Push to Cloudflare
 All routes return JSON. Skill IDs must be URL-encoded in path parameters
 (e.g. `github%3Atrailofbits%2Fskills%2Fsecurity-audit`).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/search?q=...&limit=20` | FTS search over skills, enriched with review stats |
-| GET | `/skills/:id` | Skill metadata + per-version review stats |
-| GET | `/skills/:id/content` | Inline skill content (markdown), or 404 with source_url hint |
-| GET | `/skills/:id/reviews` | Paginated reviews for a skill |
-| POST | `/reviews` | Create a review (returns `review_key`) |
-| PATCH | `/reviews/:key` | Append a stage to an existing review |
-| GET | `/` or `/health` | Health check |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/auth/github/device` | No | Start GitHub OAuth device flow (returns device_code + user_code) |
+| POST | `/auth/github/token` | No | Exchange device_code for access token (server-side, uses client_secret) |
+| POST | `/auth/link-github` | Sig | Link keypair to GitHub account (retroactive trust upgrade) |
+| GET | `/search?q=...&limit=20` | No | FTS search over skills, enriched with review stats |
+| GET | `/skills/:id` | No | Skill metadata + per-version review stats |
+| GET | `/skills/:id/content` | No | Inline skill content (markdown), or 404 with source_url hint |
+| GET | `/skills/:id/reviews` | No | Paginated reviews for a skill |
+| POST | `/reviews` | Sig | Create a review (returns `review_key` + `trust_level`) |
+| PATCH | `/reviews/:key` | Sig | Append a stage to an existing review |
+| GET | `/` or `/health` | No | Health check |
+
+**Auth**: Endpoints marked "Sig" require Ed25519 signature headers:
+- `X-Clarmory-Public-Key`: base64-encoded Ed25519 public key
+- `X-Clarmory-Signature`: base64 signature over the raw request body
+
+Identity auto-registers on first review. Optional GitHub verification upgrades
+trust_level from `anonymous` to `github_verified`. Rate limits: 30 reviews per
+IP per hour, 10 GitHub auth attempts per IP per hour.
 
 ## Validation Strategy
 

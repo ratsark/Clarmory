@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS reviews (
   stages TEXT NOT NULL DEFAULT '[]', -- JSON array of stage objects
   rating INTEGER,                    -- overall rating (1-5), may be null until post-use
   security_flag INTEGER NOT NULL DEFAULT 0,  -- 1 if security issue flagged
+  trust_level TEXT NOT NULL DEFAULT 'anonymous',  -- 'anonymous' | 'github_verified'
+  public_key TEXT,                    -- reviewer's Ed25519 public key (FK to identities)
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (skill_id) REFERENCES skills(id)
@@ -61,7 +63,29 @@ CREATE INDEX IF NOT EXISTS idx_reviews_skill_id ON reviews(skill_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_agent_id ON reviews(agent_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_security ON reviews(security_flag) WHERE security_flag = 1;
 
--- Review stats: aggregated view per skill+version
+-- Identities: reviewer identities (keypair-based, optionally GitHub-verified)
+CREATE TABLE IF NOT EXISTS identities (
+  public_key TEXT PRIMARY KEY,        -- base64-encoded Ed25519 public key
+  github_username TEXT,               -- GitHub username (null if anonymous)
+  trust_level TEXT NOT NULL DEFAULT 'anonymous',  -- 'anonymous' | 'github_verified'
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ip_address TEXT                     -- IP of first review submission
+);
+
+CREATE INDEX IF NOT EXISTS idx_identities_github ON identities(github_username)
+  WHERE github_username IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_identities_trust ON identities(trust_level);
+
+-- Rate limits: IP-based counters for review submission
+CREATE TABLE IF NOT EXISTS rate_limits (
+  ip TEXT NOT NULL,
+  action TEXT NOT NULL,               -- 'review' or 'github_auth'
+  window TEXT NOT NULL,               -- hour or day bucket, e.g. '2026-04-02T14'
+  count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (ip, action, window)
+);
+
+-- Review stats: aggregated view per skill+version with dual scoring
 CREATE VIEW IF NOT EXISTS review_stats AS
 SELECT
   skill_id,
@@ -69,6 +93,10 @@ SELECT
   COUNT(*) AS review_count,
   COUNT(rating) AS rated_count,
   ROUND(AVG(rating), 2) AS avg_rating,
+  -- Verified-only scoring
+  SUM(CASE WHEN trust_level = 'github_verified' THEN 1 ELSE 0 END) AS verified_count,
+  SUM(CASE WHEN trust_level = 'github_verified' AND rating IS NOT NULL THEN 1 ELSE 0 END) AS verified_rated_count,
+  ROUND(AVG(CASE WHEN trust_level = 'github_verified' THEN rating ELSE NULL END), 2) AS verified_avg_rating,
   SUM(CASE WHEN security_flag = 1 THEN 1 ELSE 0 END) AS security_flags,
   SUM(CASE WHEN json_array_length(stages) > 0
     AND json_extract(stages, '$[0].type') = 'code_review' THEN 1 ELSE 0 END) AS code_reviews,

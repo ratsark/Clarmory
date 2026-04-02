@@ -4,6 +4,9 @@ compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+[vars]
+GITHUB_CLIENT_ID = "Ov23liMBuSxFKAi3NaXi"
+
 [[rules]]
 type = "Text"
 globs = ["**/*.sql"]

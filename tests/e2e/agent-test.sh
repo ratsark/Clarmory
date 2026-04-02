@@ -295,17 +295,68 @@ You MUST URL-encode them in path segments.
 
 ## Submitting Reviews
 
-Create a code review:
+Reviews require Ed25519 signature authentication. Generate a keypair, sign the
+request body, and include the public key and signature as headers.
 
-    curl -s -X POST '$API_URL/reviews' \\
-      -H 'Content-Type: application/json' \\
-      -d '{"agent_id":"test-agent","extension_id":"SKILL_ID","version_hash":"VERSION_HASH","stage":"code_review","security_ok":true,"quality_rating":4,"summary":"..."}'
+### Step 1: Generate a keypair (once per session)
 
-Save the returned review_key. Then submit post-use review:
+\`\`\`bash
+python3 -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+import base64, json
 
-    curl -s -X PATCH '$API_URL/reviews/REVIEW_KEY' \\
-      -H 'Content-Type: application/json' \\
-      -d '{"stage":"post_use","worked":true,"rating":4,"task_summary":"...","what_worked":"...","what_didnt":"none"}'
+key = Ed25519PrivateKey.generate()
+pub = key.public_key()
+pub_b64 = base64.b64encode(pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+priv_hex = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex()
+print(json.dumps({'public_key_b64': pub_b64, 'private_key_hex': priv_hex}))
+"
+\`\`\`
+
+Save the output — you will use both values for signing.
+
+### Step 2: Sign and submit
+
+For each review request, sign the exact JSON body string:
+
+\`\`\`bash
+# Sign the body
+BODY='{"agent_id":"test-agent","extension_id":"SKILL_ID","version_hash":"VERSION_HASH","stage":"code_review","security_ok":true,"quality_rating":4,"summary":"..."}'
+SIG=\$(python3 -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import base64, sys
+key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex('PRIVATE_KEY_HEX'))
+sig = key.sign(sys.argv[1].encode())
+print(base64.b64encode(sig).decode())
+" "\$BODY")
+
+# Submit with auth headers
+curl -s -X POST '$API_URL/reviews' \\
+  -H 'Content-Type: application/json' \\
+  -H "X-Clarmory-Public-Key: PUBLIC_KEY_B64" \\
+  -H "X-Clarmory-Signature: \$SIG" \\
+  -d "\$BODY"
+\`\`\`
+
+Save the returned review_key. Then submit post-use review (same signing pattern):
+
+\`\`\`bash
+BODY='{"stage":"post_use","worked":true,"rating":4,"task_summary":"...","what_worked":"...","what_didnt":"none"}'
+SIG=\$(python3 -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import base64, sys
+key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex('PRIVATE_KEY_HEX'))
+sig = key.sign(sys.argv[1].encode())
+print(base64.b64encode(sig).decode())
+" "\$BODY")
+
+curl -s -X PATCH '$API_URL/reviews/REVIEW_KEY' \\
+  -H 'Content-Type: application/json' \\
+  -H "X-Clarmory-Public-Key: PUBLIC_KEY_B64" \\
+  -H "X-Clarmory-Signature: \$SIG" \\
+  -d "\$BODY"
+\`\`\`
 SKILLEOF
 
 # Create a CLAUDE.md that references the skill

@@ -69,6 +69,59 @@ via SendMessage — never return results as plain text output.
 
 API base: https://api.clarmory.com
 
+AUTHENTICATION: Review write endpoints (POST /reviews, PATCH /reviews/:key) require
+Ed25519 signature auth. Reviews have a trust_level: 'anonymous' (default) or
+'github_verified' (after linking GitHub). Read endpoints are public — no auth needed.
+
+--- IDENTITY SETUP (first time) ---
+1. Check ~/.claude/clarmory/identity.json — if it exists, load the keypair.
+2. If no identity exists, generate one:
+   Run via Bash:
+   python3 -c \"
+   from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+   from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
+   import base64, json, os
+   key = Ed25519PrivateKey.generate()
+   priv = base64.b64encode(key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode()
+   pub = base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+   os.makedirs(os.path.expanduser('~/.claude/clarmory'), exist_ok=True)
+   with open(os.path.expanduser('~/.claude/clarmory/identity.json'), 'w') as f:
+       json.dump({'private_key': priv, 'public_key': pub}, f)
+   print(json.dumps({'public_key': pub}))
+   \"
+   If cryptography is not installed, use: pip install cryptography
+3. The identity auto-registers on first review submission — no separate registration needed.
+
+--- SIGNING REVIEWS ---
+For every POST /reviews or PATCH /reviews/:key call:
+1. Serialize the request body as JSON (the exact bytes matter for signature).
+2. Sign the JSON bytes with the Ed25519 private key.
+3. Include two headers:
+   X-Clarmory-Public-Key: <base64 public key>
+   X-Clarmory-Signature: <base64 signature>
+Example signing via Bash:
+   python3 -c \"
+   from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+   import base64, json, sys, os
+   identity = json.load(open(os.path.expanduser('~/.claude/clarmory/identity.json')))
+   key = Ed25519PrivateKey.from_private_bytes(base64.b64decode(identity['private_key']))
+   body = sys.stdin.buffer.read()
+   sig = base64.b64encode(key.sign(body)).decode()
+   print(json.dumps({'public_key': identity['public_key'], 'signature': sig}))
+   \" <<< 'JSON_BODY'
+Then include the headers in the WebFetch/curl call.
+
+--- GITHUB VERIFICATION (optional, user-initiated) ---
+GitHub verification is NEVER prompted during review submission. Reviews always go
+through immediately with the keypair — zero friction, no gates.
+
+Mention GitHub auth casually at natural moments (e.g. after a successful install):
+'By the way, you can set up GitHub verification for your Clarmory reviews anytime — just ask.'
+Then move on immediately. No prompt, no pause, no waiting for input.
+
+When the user explicitly asks to set up GitHub auth (e.g. 'set up GitHub auth for Clarmory'),
+handle it via the LINK_GITHUB message type (see below).
+
 IMPORTANT: Skill IDs contain colons and slashes (e.g. github:trailofbits/skills/security-audit).
 You MUST URL-encode them in path segments: encodeURIComponent(SKILL_ID).
 
@@ -82,9 +135,10 @@ Do ALL of the following, then send back a compact recommendation:
 1. SEARCH: WebFetch('https://api.clarmory.com/search?q=QUERY')
    Each result has inclusion_reason (most-relevant, highest-rated, most-used, rising).
    Results include:
-   - reviews: {total, code_reviews, installs, declines, post_use, avg_rating, security_flags}
+   - reviews: {total, code_reviews, installs, declines, post_use, avg_rating, verified_count, verified_avg_rating, security_flags}
    - version_info: {current_hash, previous_hash, reviews_for_current, is_new_version, version_uncertain}
-   Pick the best candidate. Prefer skills with post_use reviews. Flag security_flags > 0.
+   Pick the best candidate. Prefer skills with post_use reviews. When verified_count >= 5,
+   prefer verified_avg_rating over avg_rating. Flag security_flags > 0.
 
 2. EVALUATE:
    Fetch details: WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID))
@@ -100,10 +154,11 @@ Do ALL of the following, then send back a compact recommendation:
 
    Quality checks — well-documented? Clean code? Error handling? Appropriately scoped?
 
-3. SUBMIT CODE REVIEW:
+3. SUBMIT CODE REVIEW (requires signature — see AUTHENTICATION above):
+   Sign the JSON body with Ed25519, then:
    WebFetch('https://api.clarmory.com/reviews', {
      method: 'POST',
-     headers: {'Content-Type': 'application/json'},
+     headers: {'Content-Type': 'application/json', 'X-Clarmory-Public-Key': PUB_KEY, 'X-Clarmory-Signature': SIGNATURE},
      body: {
        agent_id: 'AGENT_ID',
        extension_id: 'SKILL_ID',
@@ -127,7 +182,7 @@ Do ALL of the following, then send back a compact recommendation:
      type: 'skill' | 'mcp-local' | 'mcp-hosted',
      description: 'one sentence',
      fit: 'why this skill fits the task',
-     rating: 'X.X avg from N post-use reviews' or 'no reviews yet',
+     rating: 'X.X avg from N reviews (Y verified at Z.Z avg)' or 'no reviews yet',
      version_trust: 'reviewed' | 'new-version' | 'version-uncertain',
      security: 'ok' | 'CONCERN: details',
      content_url: 'URL to fetch raw skill content',
@@ -183,10 +238,10 @@ Do ALL of the following:
 --- DECLINE message ---
 The outer agent sends: { action: 'decline', reason: '...' }
 
-Submit decline review stage, then confirm:
+Submit decline review stage (requires signature), then confirm:
 WebFetch('https://api.clarmory.com/reviews/REVIEW_KEY', {
   method: 'PATCH',
-  headers: {'Content-Type': 'application/json'},
+  headers: {'Content-Type': 'application/json', 'X-Clarmory-Public-Key': PUB_KEY, 'X-Clarmory-Signature': SIGNATURE},
   body: { stage: 'user_decision', installed: false, decline_reason: 'REASON' }
 })
 Send: { action: 'declined', review_key: 'rv_xxx' }
@@ -203,10 +258,10 @@ The outer agent sends: {
   suggested_improvements: '...'
 }
 
-Submit post-use review:
+Submit post-use review (requires signature):
 WebFetch('https://api.clarmory.com/reviews/REVIEW_KEY', {
   method: 'PATCH',
-  headers: {'Content-Type': 'application/json'},
+  headers: {'Content-Type': 'application/json', 'X-Clarmory-Public-Key': PUB_KEY, 'X-Clarmory-Signature': SIGNATURE},
   body: { stage: 'post_use', worked, rating, task_summary, what_worked, what_didnt, suggested_improvements }
 })
 
@@ -214,6 +269,27 @@ Rating guide: 1 = broken/harmful, 3 = functional with issues, 5 = excellent.
 If you don't have the review_key (outer agent lost it), create a new review with POST /reviews instead.
 
 Send: { action: 'reviewed' }
+
+--- LINK_GITHUB message ---
+The outer agent sends: { action: 'link_github' }
+The user has explicitly asked to set up GitHub verification.
+
+1. POST https://api.clarmory.com/auth/github/device (no body needed)
+   Returns: {device_code, user_code, verification_uri, interval}
+2. Send to outer agent via SendMessage:
+   { action: 'github_device_code', verification_uri: '...', user_code: '...' }
+   The outer agent will show this to the user.
+3. Poll token endpoint every INTERVAL seconds:
+   POST https://api.clarmory.com/auth/github/token with {device_code: DEVICE_CODE}
+   Returns {error: 'authorization_pending'} until user completes flow, then returns {access_token: '...'}.
+4. Once you have the access_token, sign the linkage request body and POST:
+   Body: {github_token: ACCESS_TOKEN, public_key: PUB_KEY}
+   Sign the body with Ed25519 private key, include X-Clarmory-Signature header.
+   POST https://api.clarmory.com/auth/link-github
+   Returns: {verified: true, github_username: '...', trust_level: 'github_verified'}
+5. Save github_username to ~/.claude/clarmory/identity.json
+6. Send confirmation: { action: 'github_linked', github_username: '...' }
+   All past and future reviews from this keypair are now github_verified.
 "
 })
 ```
@@ -330,6 +406,29 @@ If the subagent is no longer alive (long-running session, context expired),
 spawn a new one with the same prompt and send the review message. The new
 subagent will create a fresh review via `POST /reviews` — fresh perspectives
 from different contexts are independently valuable.
+
+## GitHub Verification (User-Initiated)
+
+If the user asks to set up GitHub verification for Clarmory reviews (e.g. "set up
+GitHub auth for Clarmory"), send the subagent:
+
+```
+SendMessage({
+  to: "clarmory",
+  message: { action: "link_github" }
+})
+```
+
+The subagent will respond with `github_device_code` containing a URL and code.
+Show the user: "Go to **{verification_uri}** and enter code **{user_code}**."
+
+The subagent polls automatically and sends `github_linked` when complete. Tell the
+user: "GitHub linked as **{github_username}**. All your past and future Clarmory
+reviews are now verified."
+
+**Do not prompt the user about GitHub verification.** Mention it casually at
+natural moments (e.g. after a successful install): "By the way, you can set up
+GitHub verification for your Clarmory reviews anytime — just ask." Then move on.
 
 ## Flow Summary
 

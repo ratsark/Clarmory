@@ -96,7 +96,57 @@ beforeAll(async () => {
   for (const stmt of stmts) {
     await env.DB.prepare(stmt).run();
   }
+  // Generate Ed25519 keypair for signed review tests
+  await generateTestKeypair();
 });
+
+// --- Ed25519 signing helpers for auth ---
+
+let testKeyPair: CryptoKeyPair;
+let testPublicKeyB64: string;
+
+async function generateTestKeypair(): Promise<void> {
+  testKeyPair = await crypto.subtle.generateKey("Ed25519", true, [
+    "sign",
+    "verify",
+  ]);
+  const publicKeyBytes = await crypto.subtle.exportKey(
+    "raw",
+    testKeyPair.publicKey
+  );
+  testPublicKeyB64 = btoa(
+    String.fromCharCode(...new Uint8Array(publicKeyBytes))
+  );
+}
+
+async function signedRequest(
+  path: string,
+  bodyObj: Record<string, unknown>,
+  method: "POST" | "PATCH" = "POST"
+): Promise<{ status: number; body: any }> {
+  const bodyStr = JSON.stringify(bodyObj);
+  const bodyBytes = new TextEncoder().encode(bodyStr);
+  const signature = await crypto.subtle.sign(
+    "Ed25519",
+    testKeyPair.privateKey,
+    bodyBytes
+  );
+  const signatureB64 = btoa(
+    String.fromCharCode(...new Uint8Array(signature))
+  );
+
+  const response = await callWorker(path, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Clarmory-Public-Key": testPublicKeyB64,
+      "X-Clarmory-Signature": signatureB64,
+    },
+    body: bodyStr,
+  });
+  const respBody = await response.json();
+  return { status: response.status, body: respBody };
+}
 
 // --- Types matching the SKILL.md contract ---
 
@@ -116,6 +166,8 @@ interface SearchResult {
     declines: number;
     post_use: number;
     avg_rating: number | null;
+    verified_count: number;
+    verified_avg_rating: number | null;
     security_flags: number;
   };
   version_info: {
@@ -326,87 +378,83 @@ describe("GET /skills/:id/reviews", () => {
 // --- Create Review (SKILL.md contract) ---
 
 describe("POST /reviews", () => {
-  it("returns 400 without required fields", async () => {
-    const { status } = await jsonResponse("/reviews", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    expect(status).toBe(400);
-  });
-
-  it("returns 404 for nonexistent skill", async () => {
-    const { status } = await jsonResponse("/reviews", {
+  it("returns 401 without signature", async () => {
+    const { status, body } = await jsonResponse<{ error: string }>("/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         agent_id: "test-agent",
-        skill_id: "github:nonexistent/skill",
+        skill_id: "github:trailofbits/skills/security-audit",
       }),
+    });
+    expect(status).toBe(401);
+    expect(body.error).toContain("Signature required");
+  });
+
+  it("returns 400 without required fields", async () => {
+    const { status } = await signedRequest("/reviews", {});
+    expect(status).toBe(400);
+  });
+
+  it("returns 404 for nonexistent skill", async () => {
+    const { status } = await signedRequest("/reviews", {
+      agent_id: "test-agent",
+      skill_id: "github:nonexistent/skill",
     });
     expect(status).toBe(404);
   });
 
   it("accepts extension_id as alias for skill_id", async () => {
-    const { status, body } = await jsonResponse<{
-      review_key: string;
-      created: boolean;
-    }>("/reviews", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent_id: "test-agent-alias",
-        extension_id: "github:trailofbits/skills/security-audit",
-        version_hash: "a1b2c3d4",
-        stage: "code_review",
-        security_ok: true,
-        quality_rating: 4,
-        summary: "Clean security skill",
-        findings: "Well-structured audit workflow",
-      }),
+    const { status, body } = await signedRequest("/reviews", {
+      agent_id: "test-agent-alias",
+      extension_id: "github:trailofbits/skills/security-audit",
+      version_hash: "a1b2c3d4",
+      stage: "code_review",
+      security_ok: true,
+      quality_rating: 4,
+      summary: "Clean security skill",
+      findings: "Well-structured audit workflow",
     });
     expect(status).toBe(201);
     expect(body.review_key).toMatch(/^rv_/);
     expect(body.created).toBe(true);
+    expect(body.trust_level).toBe("anonymous");
   });
 
   it("creates a review with object stage format (backwards compat)", async () => {
-    const { status, body } = await jsonResponse<{ review_key: string }>(
-      "/reviews",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_id: "test-agent-1",
-          skill_id: "github:trailofbits/skills/security-audit",
-          version_hash: "a1b2c3d4",
-          stage: { type: "code_review", quality: "good", issues: [] },
-          rating: 4,
-        }),
-      }
-    );
+    const { status, body } = await signedRequest("/reviews", {
+      agent_id: "test-agent-1",
+      skill_id: "github:trailofbits/skills/security-audit",
+      version_hash: "a1b2c3d4",
+      stage: { type: "code_review", quality: "good", issues: [] },
+      rating: 4,
+    });
     expect(status).toBe(201);
     expect(body.review_key).toBeDefined();
   });
 
   it("creates a review with security flag via security_ok=false", async () => {
-    const { status, body } = await jsonResponse<{ review_key: string }>(
-      "/reviews",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_id: "test-agent-security",
-          skill_id: "github:trailofbits/skills/security-audit",
-          version_hash: "a1b2c3d4",
-          stage: "code_review",
-          security_ok: false,
-          summary: "Found credential exfiltration",
-        }),
-      }
-    );
+    const { status, body } = await signedRequest("/reviews", {
+      agent_id: "test-agent-security",
+      skill_id: "github:trailofbits/skills/security-audit",
+      version_hash: "a1b2c3d4",
+      stage: "code_review",
+      security_ok: false,
+      summary: "Found credential exfiltration",
+    });
     expect(status).toBe(201);
     expect(body.review_key).toBeDefined();
+  });
+
+  it("auto-registers identity on first review", async () => {
+    // The identity should have been auto-created by previous tests
+    const identity = await env.DB.prepare(
+      "SELECT * FROM identities WHERE public_key = ?"
+    )
+      .bind(testPublicKeyB64)
+      .first();
+    expect(identity).not.toBeNull();
+    expect(identity!.trust_level).toBe("anonymous");
   });
 });
 
@@ -416,54 +464,49 @@ describe("PATCH /reviews/:key", () => {
   let reviewKey: string;
 
   beforeAll(async () => {
-    const { body } = await jsonResponse<{ review_key: string }>("/reviews", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent_id: "test-agent-patch",
-        skill_id: "github:OthmanAdi/planning-with-files",
-        version_hash: "e5f6a7b8",
-        stage: "code_review",
-        quality_rating: 4,
-        summary: "Good planning skill",
-      }),
+    const { body } = await signedRequest("/reviews", {
+      agent_id: "test-agent-patch",
+      skill_id: "github:OthmanAdi/planning-with-files",
+      version_hash: "e5f6a7b8",
+      stage: "code_review",
+      quality_rating: 4,
+      summary: "Good planning skill",
     });
     reviewKey = body.review_key;
   });
 
-  it("returns 404 for unknown review key", async () => {
-    const { status } = await jsonResponse("/reviews/nonexistent-key", {
+  it("returns 401 without signature", async () => {
+    const { status } = await jsonResponse("/reviews/some-key", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rating: 5 }),
     });
+    expect(status).toBe(401);
+  });
+
+  it("returns 404 for unknown review key", async () => {
+    const { status } = await signedRequest(
+      "/reviews/nonexistent-key",
+      { rating: 5 },
+      "PATCH"
+    );
     expect(status).toBe(404);
   });
 
   it("appends user_decision stage (SKILL.md format)", async () => {
-    const { status, body } = await jsonResponse<{
-      review_key: string;
-      stages_count: number;
-    }>(`/reviews/${reviewKey}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        stage: "user_decision",
-        installed: true,
-      }),
-    });
+    const { status, body } = await signedRequest(
+      `/reviews/${reviewKey}`,
+      { stage: "user_decision", installed: true },
+      "PATCH"
+    );
     expect(status).toBe(200);
     expect(body.stages_count).toBe(2);
   });
 
   it("appends post_use stage with rating (SKILL.md format)", async () => {
-    const { status, body } = await jsonResponse<{
-      review_key: string;
-      stages_count: number;
-    }>(`/reviews/${reviewKey}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const { status, body } = await signedRequest(
+      `/reviews/${reviewKey}`,
+      {
         stage: "post_use",
         worked: true,
         rating: 5,
@@ -471,23 +514,19 @@ describe("PATCH /reviews/:key", () => {
         what_worked: "Great structure",
         what_didnt: "Nothing",
         suggested_improvements: "Add Gantt chart support",
-      }),
-    });
+      },
+      "PATCH"
+    );
     expect(status).toBe(200);
     expect(body.stages_count).toBe(3);
   });
 
   it("appends stage with object format (backwards compat)", async () => {
-    const { status, body } = await jsonResponse<{
-      review_key: string;
-      stages_count: number;
-    }>(`/reviews/${reviewKey}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        stage: { type: "note", text: "Additional observation" },
-      }),
-    });
+    const { status, body } = await signedRequest(
+      `/reviews/${reviewKey}`,
+      { stage: { type: "note", text: "Additional observation" } },
+      "PATCH"
+    );
     expect(status).toBe(200);
     expect(body.stages_count).toBe(4);
   });
@@ -530,31 +569,24 @@ describe("review stats", () => {
 
   it("decline_count includes installed:false reviews (SKILL.md format)", async () => {
     // Create a review with a decline using installed:false (SKILL.md format)
-    const { body: createBody } = await jsonResponse<{ review_key: string }>(
-      "/reviews",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_id: "test-agent-decline",
-          skill_id: "github:Lum1104/Understand-Anything",
-          version_hash: "c9d0e1f2",
-          stage: "code_review",
-          quality_rating: 3,
-          summary: "Decent but not what I need",
-        }),
-      }
-    );
+    const { body: createBody } = await signedRequest("/reviews", {
+      agent_id: "test-agent-decline",
+      skill_id: "github:Lum1104/Understand-Anything",
+      version_hash: "c9d0e1f2",
+      stage: "code_review",
+      quality_rating: 3,
+      summary: "Decent but not what I need",
+    });
     // Append a decline using installed:false
-    await jsonResponse(`/reviews/${createBody.review_key}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    await signedRequest(
+      `/reviews/${createBody.review_key}`,
+      {
         stage: "user_decision",
         installed: false,
         decline_reason: "User preferred a different approach",
-      }),
-    });
+      },
+      "PATCH"
+    );
     // Check that the skill's review stats reflect the decline
     const { body } = await jsonResponse<SkillDetail>(
       `/skills/${encodeURIComponent("github:Lum1104/Understand-Anything")}`
@@ -570,6 +602,68 @@ describe("review stats", () => {
       `/skills/${encodeURIComponent("github:trailofbits/skills/security-audit")}/reviews?version=a1b2c3d4`
     );
     expect(body.count).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// --- Auth: Ed25519 signature verification ---
+
+describe("signature auth", () => {
+  it("read endpoints remain public (no auth needed)", async () => {
+    const { status: searchStatus } = await jsonResponse(
+      "/search?q=security"
+    );
+    expect(searchStatus).toBe(200);
+
+    const { status: skillStatus } = await jsonResponse(
+      `/skills/${encodeURIComponent("github:trailofbits/skills/security-audit")}`
+    );
+    expect(skillStatus).toBe(200);
+
+    const { status: reviewsStatus } = await jsonResponse(
+      `/skills/${encodeURIComponent("github:trailofbits/skills/security-audit")}/reviews`
+    );
+    expect(reviewsStatus).toBe(200);
+  });
+
+  it("rejects missing signature on review creation", async () => {
+    const { status, body } = await jsonResponse<{ error: string }>("/reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "test",
+        skill_id: "github:trailofbits/skills/security-audit",
+      }),
+    });
+    expect(status).toBe(401);
+    expect(body.error).toContain("Signature required");
+  });
+
+  it("rejects invalid signature", async () => {
+    const bodyStr = JSON.stringify({
+      agent_id: "test",
+      skill_id: "github:trailofbits/skills/security-audit",
+    });
+    const response = await callWorker("/reviews", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Clarmory-Public-Key": testPublicKeyB64,
+        "X-Clarmory-Signature": btoa("invalidsignaturebytes00000000000000000000000000000000000000000000000"),
+      },
+      body: bodyStr,
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("accepts valid signature and auto-registers identity", async () => {
+    // Already tested via previous review creation tests
+    const identity = await env.DB.prepare(
+      "SELECT * FROM identities WHERE public_key = ?"
+    )
+      .bind(testPublicKeyB64)
+      .first();
+    expect(identity).not.toBeNull();
+    expect(identity!.trust_level).toBe("anonymous");
   });
 });
 

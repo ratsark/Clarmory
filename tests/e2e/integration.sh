@@ -84,6 +84,38 @@ urlencode() {
   python3 -c "import urllib.parse; print(urllib.parse.quote('$1', safe=''))"
 }
 
+# --- Ed25519 keypair for signing review writes ---
+
+generate_keypair() {
+  local output
+  output=$(python3 -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+import base64
+
+key = Ed25519PrivateKey.generate()
+pub = key.public_key()
+pub_bytes = pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+priv_bytes = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+print(base64.b64encode(pub_bytes).decode())
+print(priv_bytes.hex())
+")
+  PUB_KEY_B64=$(echo "$output" | sed -n '1p')
+  PRIV_KEY_HEX=$(echo "$output" | sed -n '2p')
+}
+
+sign_body() {
+  local payload="$1"
+  python3 -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import base64, sys
+
+key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex('$PRIV_KEY_HEX'))
+sig = key.sign(sys.argv[1].encode())
+print(base64.b64encode(sig).decode())
+" "$payload"
+}
+
 http_get() {
   local url="$1"
   local status body
@@ -94,25 +126,40 @@ http_get() {
   echo "$body"
 }
 
+# POST with Ed25519 signature
 http_post() {
   local url="$1" data="$2"
-  local body status
-  body=$(curl -s -w '\n%{http_code}' -X POST "$url" -H "Content-Type: application/json" -d "$data")
+  local body status sig
+  sig=$(sign_body "$data")
+  body=$(curl -s -w '\n%{http_code}' -X POST "$url" \
+    -H "Content-Type: application/json" \
+    -H "X-Clarmory-Public-Key: $PUB_KEY_B64" \
+    -H "X-Clarmory-Signature: $sig" \
+    -d "$data")
   status=$(echo "$body" | tail -n1)
   body=$(echo "$body" | sed '$d')
   echo "$status"
   echo "$body"
 }
 
+# PATCH with Ed25519 signature
 http_patch() {
   local url="$1" data="$2"
-  local body status
-  body=$(curl -s -w '\n%{http_code}' -X PATCH "$url" -H "Content-Type: application/json" -d "$data")
+  local body status sig
+  sig=$(sign_body "$data")
+  body=$(curl -s -w '\n%{http_code}' -X PATCH "$url" \
+    -H "Content-Type: application/json" \
+    -H "X-Clarmory-Public-Key: $PUB_KEY_B64" \
+    -H "X-Clarmory-Signature: $sig" \
+    -d "$data")
   status=$(echo "$body" | tail -n1)
   body=$(echo "$body" | sed '$d')
   echo "$status"
   echo "$body"
 }
+
+# Generate keypair at start — used for all signed requests
+generate_keypair
 
 echo "=== Clarmory Layer 2 Integration Test ==="
 echo "API: $API_URL"
