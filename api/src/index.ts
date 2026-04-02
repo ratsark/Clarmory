@@ -1,0 +1,527 @@
+export interface Env {
+  DB: D1Database;
+}
+
+type RouteHandler = (
+  request: Request,
+  env: Env,
+  params: Record<string, string>
+) => Promise<Response>;
+
+// Simple router — no dependencies needed for a handful of routes.
+// Skill IDs contain colons and slashes (e.g. "github:trailofbits/skills/foo"),
+// so callers must URL-encode them. The router decodes params automatically.
+function matchRoute(
+  method: string,
+  path: string,
+  routes: Array<{ method: string; pattern: string; handler: RouteHandler }>
+): { handler: RouteHandler; params: Record<string, string> } | null {
+  for (const route of routes) {
+    if (route.method !== method) continue;
+    const paramNames: string[] = [];
+    const regexStr = route.pattern.replace(/:(\w+)/g, (_, name) => {
+      paramNames.push(name);
+      return "([^/]+)";
+    });
+    const match = path.match(new RegExp(`^${regexStr}$`));
+    if (match) {
+      const params: Record<string, string> = {};
+      paramNames.forEach((name, i) => {
+        params[name] = decodeURIComponent(match[i + 1]);
+      });
+      return { handler: route.handler, params };
+    }
+  }
+  return null;
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// --- Helpers ---
+
+interface ReviewStatsRow {
+  skill_id: string;
+  version_hash: string | null;
+  review_count: number;
+  rated_count: number;
+  avg_rating: number | null;
+  security_flags: number;
+  code_reviews: number;
+  decline_count: number;
+  post_use_reviews: number;
+}
+
+interface SkillRow {
+  id: string;
+  source: string;
+  name: string;
+  description: string;
+  version_hash: string | null;
+  source_url: string;
+  install_type: string;
+  metadata: string;
+  indexed_at: string;
+}
+
+// Build the reviews summary object the SKILL.md expects
+function buildReviewsSummary(stats: ReviewStatsRow | null) {
+  if (!stats) {
+    return {
+      total: 0,
+      code_reviews: 0,
+      installs: 0,
+      declines: 0,
+      post_use: 0,
+      avg_rating: null,
+      security_flags: 0,
+    };
+  }
+  return {
+    total: stats.review_count,
+    code_reviews: stats.code_reviews,
+    installs: stats.review_count - stats.decline_count,
+    declines: stats.decline_count,
+    post_use: stats.post_use_reviews,
+    avg_rating: stats.avg_rating,
+    security_flags: stats.security_flags,
+  };
+}
+
+// Build version_info for a skill
+function buildVersionInfo(
+  skill: SkillRow,
+  currentStats: ReviewStatsRow | null,
+  allStats: ReviewStatsRow[]
+) {
+  const metadata = JSON.parse(skill.metadata || "{}");
+  const previousVersions = allStats.filter(
+    (s) => s.version_hash !== skill.version_hash
+  );
+  const previousHash =
+    previousVersions.length > 0 ? previousVersions[0].version_hash : null;
+  return {
+    current_hash: skill.version_hash,
+    previous_hash: previousHash,
+    reviews_for_current: currentStats ? currentStats.review_count : 0,
+    is_new_version: previousHash !== null && (currentStats?.review_count ?? 0) < 3,
+    version_uncertain: metadata.version_opaque === true || skill.version_hash === null,
+  };
+}
+
+// --- Route handlers ---
+
+const searchSkills: RouteHandler = async (request, env) => {
+  const url = new URL(request.url);
+  const query = url.searchParams.get("q") || "";
+  const typeFilter = url.searchParams.get("type");
+  const limit = Math.min(
+    parseInt(url.searchParams.get("limit") || "3"),
+    20
+  );
+
+  if (!query.trim()) {
+    return json({ error: "Query parameter 'q' is required" }, 400);
+  }
+
+  // Map type param to install_type values
+  const installTypes: Record<string, string[]> = {
+    skill: ["skill"],
+    mcp: ["mcp-local", "mcp-hosted"],
+  };
+
+  const typeClause = typeFilter && installTypes[typeFilter]
+    ? `AND s.install_type IN (${installTypes[typeFilter].map(() => "?").join(",")})`
+    : "";
+  const typeBinds = typeFilter && installTypes[typeFilter]
+    ? installTypes[typeFilter]
+    : [];
+
+  // Most-relevant: FTS rank
+  const relevantQuery = `
+    SELECT s.*, 'most-relevant' AS inclusion_reason
+    FROM skills_fts fts
+    JOIN skills s ON s.rowid = fts.rowid
+    WHERE skills_fts MATCH ? ${typeClause}
+    ORDER BY rank
+    LIMIT ?
+  `;
+
+  // Highest-rated: by avg review rating (only rated skills)
+  const ratedQuery = `
+    SELECT s.*, 'highest-rated' AS inclusion_reason
+    FROM skills s
+    JOIN review_stats rs ON rs.skill_id = s.id
+      AND (rs.version_hash = s.version_hash OR (rs.version_hash IS NULL AND s.version_hash IS NULL))
+    WHERE rs.avg_rating IS NOT NULL
+      AND s.id IN (
+        SELECT s2.id FROM skills_fts fts2
+        JOIN skills s2 ON s2.rowid = fts2.rowid
+        WHERE skills_fts MATCH ?
+      )
+      ${typeClause}
+    ORDER BY rs.avg_rating DESC, rs.review_count DESC
+    LIMIT ?
+  `;
+
+  // Most-used: by total review count (proxy for installs)
+  const usedQuery = `
+    SELECT s.*, 'most-used' AS inclusion_reason
+    FROM skills s
+    JOIN review_stats rs ON rs.skill_id = s.id
+      AND (rs.version_hash = s.version_hash OR (rs.version_hash IS NULL AND s.version_hash IS NULL))
+    WHERE s.id IN (
+        SELECT s2.id FROM skills_fts fts2
+        JOIN skills s2 ON s2.rowid = fts2.rowid
+        WHERE skills_fts MATCH ?
+      )
+      ${typeClause}
+    ORDER BY (rs.review_count - rs.decline_count) DESC
+    LIMIT ?
+  `;
+
+  // Rising: recent positive reviews (post-use with high rating)
+  const risingQuery = `
+    SELECT s.*, 'rising' AS inclusion_reason
+    FROM skills s
+    JOIN reviews r ON r.skill_id = s.id
+    WHERE r.rating >= 4
+      AND r.updated_at >= datetime('now', '-30 days')
+      AND s.id IN (
+        SELECT s2.id FROM skills_fts fts2
+        JOIN skills s2 ON s2.rowid = fts2.rowid
+        WHERE skills_fts MATCH ?
+      )
+      ${typeClause}
+    GROUP BY s.id
+    ORDER BY COUNT(*) DESC
+    LIMIT ?
+  `;
+
+  // Run all queries in a batch
+  const [relevant, rated, used, rising] = await env.DB.batch([
+    env.DB.prepare(relevantQuery).bind(query, ...typeBinds, limit),
+    env.DB.prepare(ratedQuery).bind(query, ...typeBinds, limit),
+    env.DB.prepare(usedQuery).bind(query, ...typeBinds, limit),
+    env.DB.prepare(risingQuery).bind(query, ...typeBinds, limit),
+  ]);
+
+  // Deduplicate: first occurrence wins (preserves the most useful inclusion_reason)
+  const seen = new Set<string>();
+  const allResults: Array<SkillRow & { inclusion_reason: string }> = [];
+  for (const batch of [relevant, rated, used, rising]) {
+    for (const row of batch.results as Array<SkillRow & { inclusion_reason: string }>) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        allResults.push(row);
+      }
+    }
+  }
+
+  // Enrich each result with review stats and version info
+  const skillIds = allResults.map((r) => r.id);
+  let statsMap: Map<string, ReviewStatsRow[]> = new Map();
+
+  if (skillIds.length > 0) {
+    const placeholders = skillIds.map(() => "?").join(",");
+    const statsResult = await env.DB.prepare(
+      `SELECT * FROM review_stats WHERE skill_id IN (${placeholders})`
+    )
+      .bind(...skillIds)
+      .all<ReviewStatsRow>();
+
+    for (const row of statsResult.results) {
+      const existing = statsMap.get(row.skill_id) || [];
+      existing.push(row);
+      statsMap.set(row.skill_id, existing);
+    }
+  }
+
+  const enriched = allResults.map((skill) => {
+    const allStats = statsMap.get(skill.id) || [];
+    const currentStats =
+      allStats.find(
+        (s) =>
+          s.version_hash === skill.version_hash ||
+          (s.version_hash === null && skill.version_hash === null)
+      ) || null;
+
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      source: skill.source,
+      source_url: skill.source_url,
+      type: skill.install_type,
+      version_hash: skill.version_hash,
+      inclusion_reason: skill.inclusion_reason,
+      reviews: buildReviewsSummary(currentStats),
+      version_info: buildVersionInfo(skill, currentStats, allStats),
+    };
+  });
+
+  return json({ results: enriched });
+};
+
+const getSkill: RouteHandler = async (_request, env, params) => {
+  const skill = await env.DB.prepare("SELECT * FROM skills WHERE id = ?")
+    .bind(params.id)
+    .first<SkillRow>();
+
+  if (!skill) {
+    return json({ error: "Skill not found" }, 404);
+  }
+
+  // Get review stats for all versions of this skill
+  const statsResult = await env.DB.prepare(
+    "SELECT * FROM review_stats WHERE skill_id = ?"
+  )
+    .bind(params.id)
+    .all<ReviewStatsRow>();
+
+  const allStats = statsResult.results;
+  const currentStats =
+    allStats.find(
+      (s) =>
+        s.version_hash === skill.version_hash ||
+        (s.version_hash === null && skill.version_hash === null)
+    ) || null;
+
+  return json({
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    source: skill.source,
+    source_url: skill.source_url,
+    type: skill.install_type,
+    version_hash: skill.version_hash,
+    metadata: JSON.parse(skill.metadata || "{}"),
+    indexed_at: skill.indexed_at,
+    reviews: buildReviewsSummary(currentStats),
+    version_info: buildVersionInfo(skill, currentStats, allStats),
+    review_stats_by_version: allStats.map((s) => ({
+      version_hash: s.version_hash,
+      ...buildReviewsSummary(s),
+    })),
+  });
+};
+
+const getSkillReviews: RouteHandler = async (request, env, params) => {
+  const url = new URL(request.url);
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 50);
+  const offset = parseInt(url.searchParams.get("offset") || "0");
+  const versionFilter = url.searchParams.get("version");
+
+  let query: string;
+  let binds: unknown[];
+
+  if (versionFilter) {
+    query =
+      "SELECT * FROM reviews WHERE skill_id = ? AND version_hash = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?";
+    binds = [params.id, versionFilter, limit, offset];
+  } else {
+    query =
+      "SELECT * FROM reviews WHERE skill_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?";
+    binds = [params.id, limit, offset];
+  }
+
+  const reviews = await env.DB.prepare(query).bind(...binds).all();
+
+  // Parse stages JSON for each review
+  const parsed = reviews.results.map((r: Record<string, unknown>) => ({
+    ...r,
+    stages: JSON.parse(r.stages as string),
+  }));
+
+  return json({
+    skill_id: params.id,
+    count: parsed.length,
+    reviews: parsed,
+  });
+};
+
+const createReview: RouteHandler = async (request, env) => {
+  const body = (await request.json()) as Record<string, unknown>;
+
+  const agentId = body.agent_id as string | undefined;
+  // Accept both skill_id and extension_id (SKILL.md uses extension_id)
+  const skillId = (body.skill_id || body.extension_id) as string | undefined;
+  const versionHash = body.version_hash as string | undefined;
+  const stageType = body.stage as string | undefined;
+  const rating = body.rating as number | undefined;
+  const qualityRating = body.quality_rating as number | undefined;
+  const securityFlag = body.security_ok === false || body.security_flag === true;
+
+  if (!agentId || !skillId) {
+    return json(
+      { error: "agent_id and skill_id (or extension_id) are required" },
+      400
+    );
+  }
+
+  // Verify skill exists
+  const skill = await env.DB.prepare("SELECT id FROM skills WHERE id = ?")
+    .bind(skillId)
+    .first();
+  if (!skill) {
+    return json({ error: "Skill not found" }, 404);
+  }
+
+  const reviewKey = `rv_${crypto.randomUUID().replace(/-/g, "").substring(0, 12)}`;
+
+  // Build stage object from the flat body fields
+  const stageObj: Record<string, unknown> = { type: stageType || "code_review" };
+  const stageFields = [
+    "security_ok",
+    "quality_rating",
+    "summary",
+    "findings",
+    "suggested_improvements",
+    "worked",
+    "what_worked",
+    "what_didnt",
+    "task_summary",
+    "installed",
+    "decline_reason",
+    "decision",
+  ];
+  for (const field of stageFields) {
+    if (body[field] !== undefined) {
+      stageObj[field] = body[field];
+    }
+  }
+  stageObj.added_at = new Date().toISOString();
+
+  const stages = JSON.stringify([stageObj]);
+  const effectiveRating = rating ?? qualityRating ?? null;
+
+  await env.DB.prepare(`
+    INSERT INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+    .bind(
+      reviewKey,
+      agentId,
+      skillId,
+      versionHash || null,
+      stages,
+      effectiveRating,
+      securityFlag ? 1 : 0
+    )
+    .run();
+
+  return json({ review_key: reviewKey, created: true }, 201);
+};
+
+const updateReview: RouteHandler = async (request, env, params) => {
+  const body = (await request.json()) as Record<string, unknown>;
+
+  // Fetch existing review
+  const existing = await env.DB.prepare(
+    "SELECT * FROM reviews WHERE review_key = ?"
+  )
+    .bind(params.key)
+    .first<{ stages: string; rating: number | null; security_flag: number }>();
+
+  if (!existing) {
+    return json({ error: "Review not found" }, 404);
+  }
+
+  let stages = JSON.parse(existing.stages) as unknown[];
+
+  // Build new stage from flat body fields (SKILL.md sends stage type + fields at top level)
+  const stageType = body.stage as string | undefined;
+  if (stageType) {
+    const stageObj: Record<string, unknown> = { type: stageType };
+    const stageFields = [
+      "security_ok",
+      "quality_rating",
+      "summary",
+      "findings",
+      "suggested_improvements",
+      "worked",
+      "what_worked",
+      "what_didnt",
+      "task_summary",
+      "installed",
+      "decline_reason",
+      "decision",
+      "rating",
+    ];
+    for (const field of stageFields) {
+      if (body[field] !== undefined) {
+        stageObj[field] = body[field];
+      }
+    }
+    stageObj.added_at = new Date().toISOString();
+    stages.push(stageObj);
+  } else if (typeof body.stage === "object" && body.stage !== null) {
+    // Also accept the original object format for backwards compat
+    stages.push({
+      ...(body.stage as Record<string, unknown>),
+      added_at: new Date().toISOString(),
+    });
+  }
+
+  const rating =
+    body.rating !== undefined ? (body.rating as number) : existing.rating;
+  const securityFlag =
+    body.security_flag !== undefined
+      ? body.security_flag
+        ? 1
+        : 0
+      : body.security_ok === false
+        ? 1
+        : existing.security_flag;
+
+  await env.DB.prepare(`
+    UPDATE reviews
+    SET stages = ?, rating = ?, security_flag = ?, updated_at = datetime('now')
+    WHERE review_key = ?
+  `)
+    .bind(JSON.stringify(stages), rating, securityFlag, params.key)
+    .run();
+
+  return json({ review_key: params.key, stages_count: stages.length });
+};
+
+// --- Route table ---
+
+const routes: Array<{
+  method: string;
+  pattern: string;
+  handler: RouteHandler;
+}> = [
+  { method: "GET", pattern: "/search", handler: searchSkills },
+  { method: "GET", pattern: "/skills/:id", handler: getSkill },
+  { method: "GET", pattern: "/skills/:id/reviews", handler: getSkillReviews },
+  { method: "POST", pattern: "/reviews", handler: createReview },
+  { method: "PATCH", pattern: "/reviews/:key", handler: updateReview },
+];
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    const match = matchRoute(request.method, url.pathname, routes);
+
+    if (match) {
+      try {
+        return await match.handler(request, env, match.params);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        return json({ error: message }, 500);
+      }
+    }
+
+    // Health check
+    if (url.pathname === "/" || url.pathname === "/health") {
+      return json({ status: "ok", service: "clarmory-api" });
+    }
+
+    return json({ error: "Not found" }, 404);
+  },
+};

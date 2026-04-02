@@ -1,0 +1,164 @@
+-- Seed data: 11 hand-curated skills covering varied types
+-- Types: skill (SKILL.md), mcp-local (locally-run MCP server), mcp-hosted (remote MCP)
+--
+-- Includes sample reviews with all three stages (code_review, user_decision,
+-- post_use) across different skills to exercise review aggregation.
+--
+-- The MQTT skill is the designated e2e test target — it should be the clear
+-- best match for "MQTT client subscribe topic log messages".
+
+-- =============================================================================
+-- Skills
+-- =============================================================================
+
+INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, source_url, install_type, metadata) VALUES
+
+-- E2E test target: MQTT skill (must be the best match for the agent test prompt)
+('github:claudecode-contrib/mqtt-client-skill',
+ 'awesome-claude-code', 'MQTT Client',
+ 'MQTT publish/subscribe skill for IoT projects. Sets up an MQTT client that connects to a broker, subscribes to topics, publishes messages, and logs incoming data. Handles reconnection, QoS levels, and topic wildcards. Works with Mosquitto, HiveMQ, EMQX, and other standard brokers.',
+ 'f1e2d3c4', 'https://github.com/claudecode-contrib/mqtt-client-skill', 'skill',
+ '{"tags": ["mqtt", "iot", "messaging", "pubsub", "subscribe", "broker"], "author": "claudecode-contrib"}'),
+
+-- Skills (SKILL.md files)
+('github:trailofbits/skills/security-audit',
+ 'github', 'Trail of Bits Security Audit',
+ 'Security-focused code auditing skill from Trail of Bits. Performs systematic vulnerability analysis including injection flaws, auth issues, cryptographic weaknesses, and dependency risks. Produces structured findings with severity ratings.',
+ 'a1b2c3d4', 'https://github.com/trailofbits/skills', 'skill',
+ '{"tags": ["security", "audit", "vulnerability"], "author": "Trail of Bits"}'),
+
+('github:OthmanAdi/planning-with-files',
+ 'github', 'Planning with Files',
+ 'Manus-style persistent markdown planning skill. Maintains a structured plan file that evolves as the agent works, tracking phases, decisions, and progress. Prevents scope drift and provides continuity across sessions.',
+ 'e5f6a7b8', 'https://github.com/OthmanAdi/planning-with-files', 'skill',
+ '{"tags": ["planning", "workflow", "project-management"], "author": "OthmanAdi"}'),
+
+('github:Lum1104/Understand-Anything',
+ 'github', 'Understand Anything',
+ 'Turns any codebase into an interactive knowledge graph. Indexes code structure, dependencies, and relationships, then enables natural language exploration and search. Useful for onboarding to unfamiliar projects.',
+ 'c9d0e1f2', 'https://github.com/Lum1104/Understand-Anything', 'skill',
+ '{"tags": ["code-analysis", "knowledge-graph", "onboarding"], "author": "Lum1104"}'),
+
+('github:FlineDev/ContextKit',
+ 'github', 'ContextKit',
+ 'Proactive development partner with 4-phase planning: understand, plan, implement, verify. Generates rich project context including dependency maps, API surfaces, and test coverage analysis before making changes.',
+ 'a3b4c5d6', 'https://github.com/FlineDev/ContextKit', 'skill',
+ '{"tags": ["planning", "context", "development-workflow"], "author": "FlineDev"}'),
+
+('github:akin-ozer/cc-devops-skills',
+ 'github', 'DevOps Skills',
+ 'Infrastructure-as-code generation skills for Terraform, Kubernetes, Docker, and CI/CD pipelines. Handles cloud provisioning, container orchestration, and deployment automation with best-practice templates.',
+ 'f7e8d9c0', 'https://github.com/akin-ozer/cc-devops-skills', 'skill',
+ '{"tags": ["devops", "terraform", "kubernetes", "docker", "ci-cd"], "author": "akin-ozer"}'),
+
+-- Local MCP servers (run on user's machine)
+('github:modelcontextprotocol/servers/filesystem',
+ 'mcp-registry', 'MCP Filesystem Server',
+ 'Reference MCP server providing sandboxed filesystem access. Allows agents to read, write, search, and manage files within configured directories. Supports glob patterns, file metadata, and directory listing.',
+ 'b1c2d3e4', 'https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem', 'mcp-local',
+ '{"tags": ["filesystem", "mcp", "reference"], "author": "Anthropic", "runtime": "node"}'),
+
+('github:modelcontextprotocol/servers/postgres',
+ 'mcp-registry', 'MCP PostgreSQL Server',
+ 'MCP server for PostgreSQL database interaction. Provides read-only SQL query execution, schema introspection, table listing, and query explanation. Connects to any PostgreSQL instance via connection string.',
+ 'd5e6f7a8', 'https://github.com/modelcontextprotocol/servers/tree/main/src/postgres', 'mcp-local',
+ '{"tags": ["database", "postgresql", "sql", "mcp"], "author": "Anthropic", "runtime": "node"}'),
+
+('github:upstash/context7-mcp',
+ 'mcp-registry', 'Context7 MCP',
+ 'Retrieves up-to-date, version-specific documentation and code examples for libraries and frameworks directly from source. Replaces stale training data with live docs. Supports thousands of libraries.',
+ 'e9f0a1b2', 'https://github.com/upstash/context7-mcp', 'mcp-hosted',
+ '{"tags": ["documentation", "libraries", "mcp", "context"], "author": "Upstash", "runtime": "remote"}'),
+
+-- Hosted MCP servers (remote, opaque version)
+('github:anthropics/claude-code-mcp',
+ 'mcp-registry', 'Claude Code as MCP Server',
+ 'Runs Claude Code itself as an MCP server, enabling other AI tools and agents to leverage Claude Code capabilities. Provides tools for code analysis, editing, and bash execution through the MCP protocol.',
+ NULL, 'https://github.com/anthropics/claude-code', 'mcp-local',
+ '{"tags": ["meta", "mcp", "agent-orchestration"], "author": "Anthropic", "runtime": "node", "version_opaque": true}'),
+
+('github:K-Dense-AI/claude-scientific-skills',
+ 'github', 'Scientific Research Skills',
+ 'Collection of skills for scientific workflows: literature review, experimental design, data analysis, statistical testing, and paper writing. Includes domain-specific templates for biology, chemistry, physics, and engineering.',
+ 'c3d4e5f6', 'https://github.com/K-Dense-AI/claude-scientific-skills', 'skill',
+ '{"tags": ["science", "research", "data-analysis", "academic"], "author": "K-Dense-AI"}');
+
+-- =============================================================================
+-- Sample Reviews
+-- =============================================================================
+-- Reviews with all three stages to exercise review_stats aggregation.
+-- Stage JSON uses "type" field matching the review_stats view queries.
+
+-- --- MQTT Client: 3 reviews (all stages, high ratings — the e2e test target) ---
+
+-- Review 1: Full lifecycle (code_review + user_decision:installed + post_use)
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_mqtt_001', 'agent-seed-alpha', 'github:claudecode-contrib/mqtt-client-skill', 'f1e2d3c4',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 5, "summary": "Excellent MQTT skill. Clean pub/sub implementation, handles QoS correctly.", "findings": "Well-structured, good error handling for broker disconnects.", "suggested_improvements": "Could add TLS/SSL connection support."},
+   {"type": "user_decision", "decision": "installed", "installed": true},
+   {"type": "post_use", "worked": true, "rating": 5, "task_summary": "Set up MQTT subscriber for temperature sensor data in a home automation project.", "what_worked": "Connection and subscription were straightforward. Topic wildcards worked as documented.", "what_didnt": "Nothing major.", "suggested_improvements": "Add TLS support for production brokers."}]',
+ 5, 0);
+
+-- Review 2: Full lifecycle with slightly lower rating
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_mqtt_002', 'agent-seed-beta', 'github:claudecode-contrib/mqtt-client-skill', 'f1e2d3c4',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 4, "summary": "Good MQTT skill, covers the basics well.", "findings": "Solid implementation. Documentation could be more detailed on QoS levels.", "suggested_improvements": "Expand QoS documentation with examples."},
+   {"type": "user_decision", "decision": "installed", "installed": true},
+   {"type": "post_use", "worked": true, "rating": 4, "task_summary": "Built an MQTT message logger for IoT device monitoring.", "what_worked": "Quick setup, reliable message delivery.", "what_didnt": "Had to figure out wildcard syntax on my own.", "suggested_improvements": "Add wildcard subscription examples to docs."}]',
+ 4, 0);
+
+-- Review 3: Code review only (no install — agent chose a different approach)
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_mqtt_003', 'agent-seed-gamma', 'github:claudecode-contrib/mqtt-client-skill', 'f1e2d3c4',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 4, "summary": "Well-written MQTT skill. No security concerns.", "findings": "Clean code, appropriate scope.", "suggested_improvements": "Consider adding MQTT v5 support."}]',
+ NULL, 0);
+
+-- --- Trail of Bits Security Audit: 2 reviews (mixed stages) ---
+
+-- Review 1: Full lifecycle
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_sec_001', 'agent-seed-alpha', 'github:trailofbits/skills/security-audit', 'a1b2c3d4',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 5, "summary": "Professional-grade security audit skill from a reputable source.", "findings": "Comprehensive vulnerability categories, structured output format.", "suggested_improvements": "Add OWASP top 10 checklist as optional structured output."},
+   {"type": "user_decision", "decision": "installed", "installed": true},
+   {"type": "post_use", "worked": true, "rating": 5, "task_summary": "Audited a REST API for injection and auth vulnerabilities.", "what_worked": "Found 3 real injection vectors and a broken auth check. Severity ratings were accurate.", "what_didnt": "Slow on large codebases (>50k LOC).", "suggested_improvements": "Add incremental scan mode for large projects."}]',
+ 5, 0);
+
+-- Review 2: Code review + decline
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_sec_002', 'agent-seed-delta', 'github:trailofbits/skills/security-audit', 'a1b2c3d4',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 4, "summary": "Good skill but heavier than what was needed.", "findings": "Thorough but includes dependency scanning which was out of scope.", "suggested_improvements": "Allow selecting which audit categories to run."},
+   {"type": "user_decision", "decision": "declined", "installed": false, "decline_reason": "User only needed a quick check, not a full audit. Used a lighter approach instead."}]',
+ NULL, 0);
+
+-- --- Planning with Files: 1 review (full lifecycle, moderate rating) ---
+
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_plan_001', 'agent-seed-beta', 'github:OthmanAdi/planning-with-files', 'e5f6a7b8',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 3, "summary": "Useful planning skill but could be more structured.", "findings": "Creates markdown plans but format is loosely defined. No validation of plan structure.", "suggested_improvements": "Define a stricter plan schema with required sections."},
+   {"type": "user_decision", "decision": "installed", "installed": true},
+   {"type": "post_use", "worked": true, "rating": 3, "task_summary": "Used for planning a database migration across 3 phases.", "what_worked": "Kept track of what was done vs pending. Good for continuity across sessions.", "what_didnt": "Plan format drifted over time — no enforcement of structure.", "suggested_improvements": "Add plan validation that warns when required sections are missing."}]',
+ 3, 0);
+
+-- --- DevOps Skills: 1 review with security flag ---
+
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_devops_001', 'agent-seed-gamma', 'github:akin-ozer/cc-devops-skills', 'f7e8d9c0',
+ '[{"type": "code_review", "security_ok": false, "quality_rating": 2, "summary": "Functional but has a security concern: generates Terraform with hardcoded credentials in examples.", "findings": "Templates include placeholder AWS keys that look like real credentials. Risk of accidental commit. Otherwise decent IaC generation.", "suggested_improvements": "Use environment variables or AWS profiles instead of hardcoded credentials in all templates."}]',
+ NULL, 1);
+
+-- --- Context7 MCP: 1 review (hosted, version_opaque, post_use) ---
+
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_ctx7_001', 'agent-seed-alpha', 'github:upstash/context7-mcp', 'e9f0a1b2',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 4, "summary": "Useful MCP server for live documentation. Version is opaque (hosted service) so code review is limited to observed behavior.", "findings": "Returns accurate, version-specific docs. Cannot inspect server-side code.", "suggested_improvements": "Publish a changelog so users know when behavior changes."},
+   {"type": "user_decision", "decision": "installed", "installed": true},
+   {"type": "post_use", "worked": true, "rating": 4, "task_summary": "Retrieved React 19 docs while building a component library.", "what_worked": "Got accurate hook documentation that matched the installed React version.", "what_didnt": "Occasionally slow (2-3s response time).", "suggested_improvements": "Add caching for frequently accessed library versions."}]',
+ 4, 0);
+
+-- --- MCP Filesystem: 1 review (code review + decline) ---
+
+INSERT OR REPLACE INTO reviews (review_key, agent_id, skill_id, version_hash, stages, rating, security_flag) VALUES
+('rv_fs_001', 'agent-seed-delta', 'github:modelcontextprotocol/servers/filesystem', 'b1c2d3e4',
+ '[{"type": "code_review", "security_ok": true, "quality_rating": 4, "summary": "Well-sandboxed filesystem MCP server from the reference implementation.", "findings": "Properly restricts access to configured directories. Good error messages.", "suggested_improvements": "Add recursive directory size calculation."},
+   {"type": "user_decision", "decision": "declined", "installed": false, "decline_reason": "Agent already has built-in file tools — MCP filesystem server was redundant for this use case."}]',
+ NULL, 0);

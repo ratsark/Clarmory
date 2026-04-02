@@ -5,7 +5,6 @@
 # API server (Cloudflare Workers)
 cd api/
 npm install
-npm run build
 
 # No build step for the SKILL.md client
 ```
@@ -16,21 +15,44 @@ npm run build
 cd api/
 npm test                    # Vitest against local D1
 
-# End-to-end test (requires wrangler dev running)
-./tests/e2e/run.sh          # Scripted HTTP flow
-./tests/e2e/agent-test.sh   # Agent-in-the-loop via claude -p
+# Layer 2: Scripted integration (requires wrangler dev running + seeded DB)
+./tests/e2e/integration.sh          # Full API contract exercise
+./tests/e2e/integration.sh URL      # Custom API URL (default localhost:8787)
+
+# Layer 3a: Agent-in-the-loop (starts its own wrangler dev)
+./tests/e2e/agent-test.sh           # Full lifecycle: search, install, use, review
+./tests/e2e/agent-test.sh --keep-temp      # Preserve temp dir for debugging
+./tests/e2e/agent-test.sh --skip-wrangler  # Use already-running wrangler dev
 ```
 
 ## Run
 ```bash
+# Initialize local D1 database (first time, or after schema changes)
+cd api/
+npm run db:init             # Applies schema.sql + scripts/seed.sql to local D1
+
 # Local API server
 cd api/
-npx wrangler dev            # Starts Workers + D1 locally
+npx wrangler dev            # Starts Workers + D1 locally on :8787
 
 # Deploy
 cd api/
 npx wrangler deploy         # Push to Cloudflare
 ```
+
+## API Routes
+
+All routes return JSON. Skill IDs must be URL-encoded in path parameters
+(e.g. `github%3Atrailofbits%2Fskills%2Fsecurity-audit`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/search?q=...&limit=20` | FTS search over skills, enriched with review stats |
+| GET | `/skills/:id` | Skill metadata + per-version review stats |
+| GET | `/skills/:id/reviews` | Paginated reviews for a skill |
+| POST | `/reviews` | Create a review (returns `review_key`) |
+| PATCH | `/reviews/:key` | Append a stage to an existing review |
+| GET | `/` or `/health` | Health check |
 
 ## Validation Strategy
 

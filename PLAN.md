@@ -126,7 +126,7 @@ details.
 ## Phases
 
 ### Phase 1: API Server + SKILL.md Draft
-<!-- Status: not started -->
+<!-- Status: in progress -->
 
 Stand up the Cloudflare Workers + D1 API with core endpoints and automated tests.
 Draft the SKILL.md early to validate that the API contract makes sense from the
@@ -136,19 +136,19 @@ agent's perspective — the skill informs the API design, not the other way arou
       install, review). Doesn't need to be perfect, but should be concrete enough
       to validate the API contract: what calls does the agent need to make, what
       responses does it need, what does the UX feel like?
-- [ ] Project scaffolding (wrangler init, D1 schema, Vitest config)
-- [ ] D1 schema: skills table (id, source, name, description, version_hash,
+- [x] Project scaffolding (wrangler init, D1 schema, Vitest config)
+- [x] D1 schema: skills table (id, source, name, description, version_hash,
       source_url, metadata, indexed_at)
-- [ ] D1 schema: reviews table (review_key, agent_id, extension_id, version_hash,
+- [x] D1 schema: reviews table (review_key, agent_id, extension_id, version_hash,
       stage, rating, content, created_at, updated_at)
-- [ ] `GET /search?q=...` — FTS over skills, returns results tagged by inclusion
+- [x] `GET /search?q=...` — FTS over skills, returns results tagged by inclusion
       reason, enriched with review stats
-- [ ] `GET /skills/:id` — skill metadata + review summary (counts, ratings,
+- [x] `GET /skills/:id` — skill metadata + review summary (counts, ratings,
       per-version breakdown)
-- [ ] `GET /skills/:id/reviews` — paginated reviews for a skill
-- [ ] `POST /reviews` — create review (returns review_key)
-- [ ] `PATCH /reviews/:key` — append stage to existing review
-- [ ] Seed script to populate D1 with ~10 hand-curated skills
+- [x] `GET /skills/:id/reviews` — paginated reviews for a skill
+- [x] `POST /reviews` — create review (returns review_key)
+- [x] `PATCH /reviews/:key` — append stage to existing review
+- [x] Seed script to populate D1 with ~10 hand-curated skills
 - [ ] Layer 1 tests passing (Vitest)
 
 ### Phase 2: SKILL.md + Scripted Integration
