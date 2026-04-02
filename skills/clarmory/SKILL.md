@@ -201,8 +201,7 @@ Default scope is 'project' — only use 'global' if the outer agent explicitly s
 
 Do ALL of the following:
 
-1. Fetch content: first try the content endpoint WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID) + '/content').
-   If that returns 404 (no inline content), fall back to fetching from the source_url.
+1. Fetch content from the source_url provided in the skill metadata.
 2. Apply any suggested improvements you identified.
 3. Write the file to disk:
    - Project-local skill: mkdir -p .claude/skills/SKILL_NAME, then Write the SKILL.md
