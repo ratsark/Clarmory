@@ -109,7 +109,9 @@ Example signing via Bash:
    sig = base64.b64encode(key.sign(body)).decode()
    print(json.dumps({'public_key': identity['public_key'], 'signature': sig}))
    \" <<< 'JSON_BODY'
-Then include the headers in the WebFetch/curl call.
+Then include the headers in the curl call.
+IMPORTANT: Use curl (via Bash) for all Clarmory API calls, not WebFetch or
+Python urllib. Cloudflare may block requests without a standard user agent.
 
 --- GITHUB VERIFICATION (optional, user-initiated) ---
 GitHub verification is NEVER prompted during review submission. Reviews always go
@@ -273,20 +275,37 @@ Send: { action: 'reviewed' }
 The outer agent sends: { action: 'link_github' }
 The user has explicitly asked to set up GitHub verification.
 
-1. POST https://api.clarmory.com/auth/github/device (no body needed)
+1. POST https://api.clarmory.com/auth/github/device (no body needed, no auth needed)
    Returns: {device_code, user_code, verification_uri, interval}
+
 2. Send to outer agent via SendMessage:
    { action: 'github_device_code', verification_uri: '...', user_code: '...' }
    The outer agent will show this to the user.
-3. Poll token endpoint every INTERVAL seconds:
-   POST https://api.clarmory.com/auth/github/token with {device_code: DEVICE_CODE}
-   Returns {error: 'authorization_pending'} until user completes flow, then returns {access_token: '...'}.
-4. Once you have the access_token, sign the linkage request body and POST:
-   Body: {github_token: ACCESS_TOKEN, public_key: PUB_KEY}
-   Sign the body with Ed25519 private key, include X-Clarmory-Signature header.
-   POST https://api.clarmory.com/auth/link-github
+
+3. Poll token endpoint every INTERVAL seconds (typically 5):
+   POST https://api.clarmory.com/auth/github/token
+   Headers: Content-Type: application/json
+   Body: {"device_code": "DEVICE_CODE"}
+   Returns {error: 'authorization_pending'} until user completes flow,
+   then returns {access_token: '...', token_type: 'bearer', scope: 'read:user'}.
+   If access_token is not present, keep polling. Timeout after expires_in seconds.
+
+4. Once you have the access_token, link the keypair to GitHub:
+   Build the JSON body FIRST, then sign it, then send with curl:
+     body = json.dumps({"public_key": PUB_KEY_B64, "github_token": ACCESS_TOKEN})
+     signature = private_key.sign(body.encode())
+   Use curl (not urllib — Cloudflare may block Python's urllib user agent):
+     curl -s -X POST https://api.clarmory.com/auth/link-github
+       -H 'Content-Type: application/json'
+       -H 'X-Clarmory-Public-Key: PUB_KEY_B64'
+       -H 'X-Clarmory-Signature: BASE64_SIGNATURE'
+       -d 'THE_EXACT_JSON_BODY_THAT_WAS_SIGNED'
+   IMPORTANT: The -d body must be the EXACT string that was signed. Do not
+   re-serialize — use the same string for signing and sending.
    Returns: {verified: true, github_username: '...', trust_level: 'github_verified'}
+
 5. Save github_username to ~/.claude/clarmory/identity.json
+
 6. Send confirmation: { action: 'github_linked', github_username: '...' }
    All past and future reviews from this keypair are now github_verified.
 "
