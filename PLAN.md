@@ -151,32 +151,50 @@ details.
 - [x] Layer 2 tests passing (37/37 assertions, scripted integration)
 
 ### Phase 3: End-to-End Validation
-<!-- Status: in progress -->
+<!-- Status: done -->
 
 - [x] Test harness: agent-test.sh (wrangler lifecycle, temp project, claude -p)
 - [x] Test scenario: MQTT skill search/install/use/review
-- [x] Layer 3a: 5/6 checkpoints passing (review checkpoint was test URL-encoding
-      bug, not a system bug — agent DID submit reviews successfully)
-- [ ] Fix test harness URL-encoding bug, re-run for 6/6
-- [ ] Fix seed data source_url to point at real/mock content (agent got 404,
-      adapted by reconstructing from metadata)
-- [ ] Permanent test skill seeded in production DB
+- [x] Layer 3a: 6/6 checkpoints passing
+- [x] Content endpoint added (skills served from D1, no external URL dependency)
+- [x] Production deployment: api.clarmory.com live, 37/37 integration against prod
 - [ ] Layer 3b passing (live production API — scalability canary)
 
-### Phase 4: Auth Research & Implementation
+### Phase 4: Auth & DB Population
+<!-- Status: in progress -->
+
+Implement auth and populate the DB with real content for release.
+
+- [ ] API key auth: POST /auth/register (email → key), X-Clarmory-Key header
+      required for review write endpoints
+- [ ] IP-based rate limiting on review submission and key registration
+- [ ] Read endpoints remain public (search, skill details, reviews)
+- [ ] Import real skills from upstream sources (50+ target):
+      awesome-claude-code, GitHub SKILL.md search, APM repos
+- [ ] Update SKILL.md with auth flow (register key, include in API calls)
+- [ ] Auth integration tests passing
+
+### Phase 5: Pre-Release Validation
 <!-- Status: not started -->
 
-Decide and implement review authentication.
+Thorough review and real-world testing before sharing with others.
 
-- [ ] Research pass: evaluate GitHub OAuth, API keys, signed reviews, proof-of-work,
-      IP-based rate limiting, hybrid approaches
-- [ ] Prototype preferred approach
-- [ ] Integrate into API and SKILL.md
+- [ ] Full code review: security audit (injection, auth bypass, rate limit
+      evasion), scaling review (D1 limits, Worker CPU time, FTS performance
+      at 100+ skills), error handling completeness
+- [ ] Install Clarmory skill in own environment and use on a real project —
+      does the skill activate? Does it find useful things? Does the subagent
+      pattern work smoothly? Does it survive compaction?
+- [ ] Beta test with friends: share the skill, gather feedback on UX, search
+      quality, install friction, review submission flow
+- [ ] Fix issues found during testing
+- [ ] README with installation instructions and quick-start guide
+- [ ] Release checklist passing (tests/release-checklist.md)
 
-### Phase 5: Upstream Sync
+### Phase 6: Upstream Sync
 <!-- Status: not started -->
 
-Implement the cron-based upstream registry sync.
+Implement the cron-based upstream registry sync (replaces manual import script).
 
 - [ ] Adapter interface for upstream sources
 - [ ] First adapter (likely awesome-claude-code or a curated GitHub list)
