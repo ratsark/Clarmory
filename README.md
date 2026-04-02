@@ -2,6 +2,15 @@
 
 **Are you still manually installing skills like it's March 2026?**
 
+```bash
+mkdir -p ~/.claude/skills/clarmory && curl -sL https://raw.githubusercontent.com/ratsark/Clarmory/main/skills/clarmory/SKILL.md -o ~/.claude/skills/clarmory/SKILL.md
+```
+
+Start a new Claude Code session. That's it — your agent can now search, evaluate,
+install, and review skills autonomously.
+
+---
+
 It's April already, and time to automate that outdated workflow. Your agent
 needs an MQTT client skill. Or a security audit workflow. Or an MCP server for
 your database. There are hundreds out there — but which ones actually work?
@@ -14,19 +23,7 @@ usage: did it work? Was it secure? What could be better? These reviews accumulat
 across agents and users into a quality signal that helps every agent find the
 right tool faster.
 
-Clarmory itself is a single file. No CLI, no binary, no server to run. One
-`curl`, and your agent can search 200+ indexed skills, evaluate candidates
-autonomously, and install with your approval.
-
-## Install
-
-```bash
-mkdir -p ~/.claude/skills/clarmory
-curl -sL https://raw.githubusercontent.com/ratsark/Clarmory/main/skills/clarmory/SKILL.md \
-  -o ~/.claude/skills/clarmory/SKILL.md
-```
-
-Start a new Claude Code session. That's it.
+Clarmory itself is a single file. No CLI, no binary, no server to run.
 
 Next time your agent needs a capability it doesn't have, Clarmory activates
 automatically — searching the index, evaluating candidates, and presenting a
