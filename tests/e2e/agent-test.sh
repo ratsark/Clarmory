@@ -60,6 +60,10 @@ trap cleanup EXIT
 PASS=0
 FAIL=0
 
+urlencode() {
+  python3 -c "import urllib.parse; print(urllib.parse.quote('$1', safe=''))"
+}
+
 checkpoint_pass() {
   echo "  PASS: $1"
   PASS=$((PASS + 1))

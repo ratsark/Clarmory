@@ -170,8 +170,13 @@ Do ALL of the following:
      path: 'where it was written',
      content_summary: 'One sentence: what the skill does. Do NOT reproduce the full skill content — the framework loads it from disk.',
      modifications: ['list of changes applied'] or [],
-     is_mcp: true/false
+     is_mcp: true/false,
+     activation: null | string
    }
+   Set activation based on install type:
+   - Project-local skill: null (live detection handles it)
+   - Global skill: 'Restart Claude Code or run /skills reload to activate.'
+   - MCP server: 'Restart Claude Code to activate.'
 
 --- DECLINE message ---
 The outer agent sends: { action: 'decline', reason: '...' }
@@ -278,20 +283,22 @@ The subagent submits the decline review stage and confirms.
 
 ## Step 5: Use the Skill
 
-Once you receive the `installed` confirmation, the skill is ready:
+Once you receive the `installed` confirmation:
 
-- **Project-local skills** (`.claude/skills/`): Auto-detected mid-session by
-  Claude Code via live change detection. The framework loads the skill from disk,
-  so it survives context compaction — even in very long sessions, the skill
-  remains available without being held in conversation history.
-- **Global skills** (`~/.claude/skills/`): May need a session restart or direct
-  invocation via `/<skill-name>`. Does not reliably survive compaction in the
-  current session. This is why project-local is the strong default.
-- **MCP servers**: Require a Claude Code restart. Tell the user they need to
-  restart their session to use the new server. The subagent writes a note to
-  `.claude/CLAUDE.md` describing the server — this survives compaction since
-  CLAUDE.md is always loaded, so after restart the agent knows the server
-  exists even if conversation history was compacted.
+**If `activation` is not null, relay it to the user.** This is important — the
+user needs to know if they need to restart or reload.
+
+- **Project-local skills** (`.claude/skills/`): `activation` is null. Auto-detected
+  mid-session by Claude Code via live change detection. The framework loads the
+  skill from disk, so it survives context compaction — even in very long sessions,
+  the skill remains available without being held in conversation history.
+- **Global skills** (`~/.claude/skills/`): `activation` says to restart or run
+  `/skills reload`. Tell the user. Does not reliably survive compaction in the
+  current session — this is why project-local is the strong default.
+- **MCP servers**: `activation` says to restart Claude Code. Tell the user. The
+  subagent writes a note to `.claude/CLAUDE.md` describing the server — this
+  survives compaction since CLAUDE.md is always loaded, so after restart the
+  agent knows the server exists even if conversation history was compacted.
 
 ## Step 6: Send Post-Use Review
 
