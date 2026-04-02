@@ -11,7 +11,7 @@ Start a new Claude Code session. That's it — your agent can now search, evalua
 install, and review skills autonomously.
 
 <p align="center">
-  <img src="docs/flow.png" alt="Clarmory lifecycle: search, evaluate, install, use, review" width="350">
+  <img src="docs/flow.png" alt="Clarmory lifecycle: search, evaluate, install, use, review">
 </p>
 
 ---
