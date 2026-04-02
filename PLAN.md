@@ -118,18 +118,24 @@ vulnerabilities result in warnings with agent-applicable fix instructions.
 
 **Validation**: Three layers — (1) automated API tests via Vitest + local D1,
 (2) scripted integration tests simulating the agent's HTTP calls and file ops,
-(3) agent-in-the-loop end-to-end tests via `claude -p` against a seeded local
-API. Layer 3 verifies the full lifecycle: agent searches, discovers a known skill,
-installs it, uses it for a task, and submits a multi-stage review. See
-DEVELOPMENT.md for full details.
+(3) agent-in-the-loop end-to-end tests via `claude -p` in two modes: 3a against
+a controlled local API with seeded DB, 3b against the live production API to
+verify search quality holds as the index scales. See DEVELOPMENT.md for full
+details.
 
 ## Phases
 
-### Phase 1: API Server Foundation
+### Phase 1: API Server + SKILL.md Draft
 <!-- Status: not started -->
 
 Stand up the Cloudflare Workers + D1 API with core endpoints and automated tests.
+Draft the SKILL.md early to validate that the API contract makes sense from the
+agent's perspective — the skill informs the API design, not the other way around.
 
+- [ ] Draft SKILL.md — rough version covering the full lifecycle (search, evaluate,
+      install, review). Doesn't need to be perfect, but should be concrete enough
+      to validate the API contract: what calls does the agent need to make, what
+      responses does it need, what does the UX feel like?
 - [ ] Project scaffolding (wrangler init, D1 schema, Vitest config)
 - [ ] D1 schema: skills table (id, source, name, description, version_hash,
       source_url, metadata, indexed_at)
@@ -145,31 +151,28 @@ Stand up the Cloudflare Workers + D1 API with core endpoints and automated tests
 - [ ] Seed script to populate D1 with ~10 hand-curated skills
 - [ ] Layer 1 tests passing (Vitest)
 
-### Phase 2: SKILL.md Client
+### Phase 2: SKILL.md + Scripted Integration
 <!-- Status: not started -->
 
-Write the Clarmory skill that instructs the agent on the full lifecycle.
+Finalize the Clarmory skill and validate with scripted tests.
 
-- [ ] SKILL.md with search instructions (how to call the API, interpret results)
-- [ ] SKILL.md with evaluation guidance (what to look for in code review, how to
-      assess security, how to present findings to user)
-- [ ] SKILL.md with installation procedures (skills, MCP servers — project-local
-      vs global, manifest management)
-- [ ] SKILL.md with review instructions (when to create, what to include at each
-      stage, how to submit)
+- [ ] SKILL.md refined based on Phase 1 learnings — full search, evaluation,
+      installation, and review instructions
 - [ ] Manifest format defined (`~/.claude/clarmory/installed.json`)
-- [ ] Layer 2 tests passing (scripted integration)
+- [ ] Layer 2 tests passing (scripted integration against wrangler dev)
 
 ### Phase 3: End-to-End Validation
 <!-- Status: not started -->
 
-Validate the full lifecycle with a real agent session.
+Validate the full lifecycle with a real agent session in both modes.
 
 - [ ] Test harness: script that starts wrangler dev, seeds DB, sets up temp
       project dir, configures skill, runs `claude -p`
 - [ ] Test scenario: task that requires a specific seeded skill
 - [ ] Checkpoint verification: searched, discovered, installed, used, reviewed
-- [ ] Layer 3 tests passing
+- [ ] Layer 3a passing (controlled local API)
+- [ ] Permanent test skill seeded in production DB
+- [ ] Layer 3b passing (live production API — scalability canary)
 
 ### Phase 4: Auth Research & Implementation
 <!-- Status: not started -->

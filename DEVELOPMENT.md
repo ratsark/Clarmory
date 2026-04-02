@@ -75,8 +75,11 @@ API contract that the SKILL.md will rely on.
 ### Layer 3: Agent-in-the-Loop (semi-automated, higher cost)
 
 A headless Claude Code session (`claude -p`) with the Clarmory skill installed,
-given a task designed to trigger the full lifecycle. The API is seeded with a
-known skill that is the obvious answer to the task.
+given a task designed to trigger the full lifecycle. Runs in two modes:
+
+#### 3a: Controlled (local API, seeded DB)
+
+Tests the full lifecycle in isolation, without external dependencies.
 
 **Setup**:
 1. Start `wrangler dev` with a seeded D1 database containing ~10 curated skills
@@ -87,9 +90,21 @@ known skill that is the obvious answer to the task.
 **Test prompt** (example): "Set up an MQTT client in this project that subscribes
 to a topic and logs messages. Use Clarmory to find a suitable skill or extension."
 
-**Verify** (after the session):
+#### 3b: Live (production API, real DB)
+
+Tests that our specific test skill remains discoverable and usable against the
+production database as it scales. The test skill is permanently seeded in the
+live DB. Same test prompt, same checkpoints — but validates that search quality
+holds as the index grows (10 skills → 100 → thousands).
+
+This is the canary: if the test skill stops being found, our search or ranking
+has regressed.
+
+#### Checkpoints (both modes)
+
+After the session, verify:
 - (a) **Searched**: API access logs show a search request from the agent
-- (b) **Discovered**: The agent selected the seeded MQTT skill from search results
+- (b) **Discovered**: The agent selected the target skill from search results
 - (c) **Installed**: The skill/extension files exist at the expected path, manifest
   is updated with version hash and source metadata
 - (d) **Used**: The agent's output shows it applied the skill to the task (project
@@ -97,10 +112,12 @@ to a topic and logs messages. Use Clarmory to find a suitable skill or extension
 - (e) **Reviewed**: API contains a review from this agent for this skill, with at
   least code-review and post-use stages populated
 
-**"Done" means**: All five checkpoints pass. This is the gold-standard validation
-that the entire system works as designed.
+**"Done" means**: All five checkpoints pass in both modes. 3a is the functional
+test; 3b is the scalability canary.
 
 ### Running Validation
 
-Layer 1 runs on every change (fast, free). Layer 2 runs before any deploy. Layer 3
-runs at milestones (new phase complete, major changes to SKILL.md or API contract).
+Layer 1 runs on every change (fast, free). Layer 2 runs before any deploy.
+Layer 3a runs at milestones (new phase complete, major changes to SKILL.md or
+API contract). Layer 3b runs after any upstream sync that significantly grows
+the index, and periodically as a regression check.
