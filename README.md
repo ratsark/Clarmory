@@ -1,6 +1,7 @@
 # Clarmory
 
 **Are you still manually installing skills like it's March 2026?**
+**It's April already, and time to automate that outdated workflow.**
 
 ```bash
 mkdir -p ~/.claude/skills/clarmory && curl -sL https://raw.githubusercontent.com/ratsark/Clarmory/main/skills/clarmory/SKILL.md -o ~/.claude/skills/clarmory/SKILL.md
@@ -11,7 +12,7 @@ install, and review skills autonomously.
 
 ---
 
-It's April already, and time to automate that outdated workflow. Your agent
+Your agent
 needs an MQTT client skill. Or a security audit workflow. Or an MCP server for
 your database. There are hundreds out there — but which ones actually work?
 Star counts measure popularity, not quality. READMEs are marketing copy. The
