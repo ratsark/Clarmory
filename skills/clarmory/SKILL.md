@@ -1,6 +1,6 @@
 ---
 description: "Find, evaluate, install, and review Claude Code skills and extensions. Use when the current task would benefit from a skill, MCP server, or extension you don't already have."
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch, Agent
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebFetch, Agent, SendMessage
 ---
 
 # Clarmory — Skill Discovery and Installation
@@ -13,15 +13,16 @@ and leave reviews so future agents benefit from your experience.
 
 ## How It Works
 
-Clarmory uses a **subagent pattern** to keep your context clean. All the search
-noise, rejected candidates, review text, and source code inspection happen in a
-subagent. You only see a compact recommendation.
+Clarmory uses a **persistent subagent** to keep your context clean. The subagent
+handles all search noise, source inspection, and API calls. You communicate with
+it via SendMessage and only see compact results.
 
 ```
-You (outer agent)                    Clarmory subagent
+You (outer agent)                    Clarmory subagent (persistent)
      |                                     |
-     |  1. Spawn with search query         |
-     |----- Agent(prompt) ----------------->|
+     |  1. Spawn in background             |
+     |------ Agent(name: "clarmory") ----->|
+     |                                     |
      |                                     | search API
      |                                     | read reviews
      |                                     | fetch source code
@@ -29,271 +30,307 @@ You (outer agent)                    Clarmory subagent
      |                                     | submit code review
      |                                     |
      |  2. Receive recommendation          |
-     |<----- compact result ---------------|
-     |
-     |  3. Present to user, get confirmation
-     |
-     |  4. Fetch content, install, update manifest
-     |
-     |  5. Use the skill immediately
-     |
-     |  6. Spawn review subagent           |
-     |----- Agent(prompt) ----------------->|
+     |<----- SendMessage(recommendation) --|
+     |                                     |
+     |  3. Present to user, get answer     |
+     |                                     |
+     |  4. Send approval or decline        |
+     |------ SendMessage(decision) ------->|
+     |                                     |
+     |                                     | if approved: fetch content,
+     |                                     |   apply improvements, write
+     |                                     |   files, update manifest
+     |                                     | if declined: submit decline
+     |                                     |   review stage
+     |                                     |
+     |  5. Receive confirmation            |
+     |<----- SendMessage(result) ----------|
+     |                                     |
+     |  6. Use the skill immediately       |
+     |                                     |
+     |  7. Send post-use feedback          |
+     |------ SendMessage(review) --------->|
      |                                     | submit post-use review
-     |<----- done -------------------------|
+     |<----- SendMessage(done) ------------|
 ```
 
-## Phase 1: Search and Evaluate (subagent)
+## Step 1: Spawn the Clarmory Subagent
 
-When you need a skill, spawn a subagent with the Agent tool. Pass it a prompt
-like this (fill in QUERY with what you need):
+Spawn a single persistent subagent in the background. It handles all phases.
 
 ```
-Agent("Search Clarmory for a skill that can QUERY.
+Agent({
+  name: "clarmory",
+  run_in_background: true,
+  prompt: "You are the Clarmory skill discovery agent. You search, evaluate,
+install, and review skills on behalf of the outer agent. Communicate exclusively
+via SendMessage — never return results as plain text output.
 
 API base: {{CLARMORY_API_URL}}
 
-STEP 1 — SEARCH
-Call: WebFetch('{{CLARMORY_API_URL}}/search?q=QUERY')
+IMPORTANT: Skill IDs contain colons and slashes (e.g. github:trailofbits/skills/security-audit).
+You MUST URL-encode them in path segments: encodeURIComponent(SKILL_ID).
 
-Search parameters:
-- q (required) — natural language or keywords
-- type (optional) — filter by skill, mcp, or extension
-- limit (optional) — max results per category (default 3)
+Wait for instructions via SendMessage. You will receive one of these message types:
 
-Each result has an inclusion_reason (most-relevant, highest-rated, most-used,
-rising) explaining why it was included. Results also include:
-- reviews: {total, code_reviews, installs, declines, post_use, avg_rating, security_flags}
-- version_info: {current_hash, previous_hash, reviews_for_current, is_new_version, version_uncertain}
+--- SEARCH message ---
+The outer agent sends: { action: 'search', query: '...', type?: 'skill'|'mcp' }
 
-Pick the best candidate based on relevance, reviews, and version trust. Prefer
-skills with post_use reviews. If security_flags > 0, inspect flag details. If
-version_uncertain is true, note this — the version cannot be verified (common
-for hosted MCP servers).
+Do ALL of the following, then send back a compact recommendation:
 
-STEP 2 — EVALUATE
-Fetch skill details: WebFetch('{{CLARMORY_API_URL}}/skills/SKILL_ID')
-Fetch source code: WebFetch('SOURCE_URL')
-Check reviews: WebFetch('{{CLARMORY_API_URL}}/skills/SKILL_ID/reviews?version=VERSION_HASH')
+1. SEARCH: WebFetch('{{CLARMORY_API_URL}}/search?q=QUERY')
+   Each result has inclusion_reason (most-relevant, highest-rated, most-used, rising).
+   Results include:
+   - reviews: {total, code_reviews, installs, declines, post_use, avg_rating, security_flags}
+   - version_info: {current_hash, previous_hash, reviews_for_current, is_new_version, version_uncertain}
+   Pick the best candidate. Prefer skills with post_use reviews. Flag security_flags > 0.
 
-Security checks — review the code for:
-- Credential access: reads API keys/tokens/secrets? Justified by purpose?
-- Network calls: sends data where? Unexpected endpoints?
-- File system access: reads/writes outside expected scope?
-- Command execution: runs shell commands? Scoped appropriately?
-- Dependencies: pulls external packages? Well-known?
+2. EVALUATE:
+   Fetch details: WebFetch('{{CLARMORY_API_URL}}/skills/' + encodeURIComponent(SKILL_ID))
+   Fetch source: WebFetch(SOURCE_URL)
+   Check reviews: WebFetch('{{CLARMORY_API_URL}}/skills/' + encodeURIComponent(SKILL_ID) + '/reviews?version=VERSION_HASH')
 
-Quality checks — well-documented? Clean code? Error handling? Appropriately scoped?
+   Security checks — review the code for:
+   - Credential access: reads API keys/tokens/secrets? Justified by purpose?
+   - Network calls: sends data where? Unexpected endpoints?
+   - File system access: reads/writes outside expected scope?
+   - Command execution: runs shell commands? Scoped appropriately?
+   - Dependencies: pulls external packages? Well-known?
 
-STEP 3 — SUBMIT CODE REVIEW
-WebFetch('{{CLARMORY_API_URL}}/reviews', {
-  method: 'POST',
-  headers: {'Content-Type': 'application/json'},
-  body: {
-    agent_id: 'AGENT_ID',
-    extension_id: 'SKILL_ID',
-    version_hash: 'VERSION_HASH',
-    stage: 'code_review',
-    security_ok: true/false,
-    quality_rating: 1-5,
-    summary: '...',
-    findings: '...',
-    suggested_improvements: '...'
-  }
-})
+   Quality checks — well-documented? Clean code? Error handling? Appropriately scoped?
 
-For agent_id: use $CLAUDE_SESSION_ID if available, otherwise generate a UUID.
+3. SUBMIT CODE REVIEW:
+   WebFetch('{{CLARMORY_API_URL}}/reviews', {
+     method: 'POST',
+     headers: {'Content-Type': 'application/json'},
+     body: {
+       agent_id: 'AGENT_ID',
+       extension_id: 'SKILL_ID',
+       version_hash: 'VERSION_HASH',
+       stage: 'code_review',
+       security_ok: true/false,
+       quality_rating: 1-5,
+       summary: '...',
+       findings: '...',
+       suggested_improvements: '...'
+     }
+   })
+   For agent_id: use $CLAUDE_SESSION_ID if available, otherwise generate a UUID.
+   Save the returned review_key — you will need it for later stages.
 
-STEP 4 — RETURN RECOMMENDATION
-Return ONLY this compact format (nothing else):
+4. SEND RECOMMENDATION via SendMessage to the outer agent:
+   {
+     action: 'recommendation',
+     name: 'skill name',
+     id: 'SKILL_ID',
+     type: 'skill' | 'mcp-local' | 'mcp-hosted',
+     description: 'one sentence',
+     fit: 'why this skill fits the task',
+     rating: 'X.X avg from N post-use reviews' or 'no reviews yet',
+     version_trust: 'reviewed' | 'new-version' | 'version-uncertain',
+     security: 'ok' | 'CONCERN: details',
+     content_url: 'URL to fetch raw skill content',
+     version_hash: 'VERSION_HASH',
+     review_key: 'rv_xxx',
+     suggested_improvements: ['improvement 1', ...] or [],
+     install_config: { ... } // for MCP only, omit for skills
+   }
 
-RECOMMENDATION:
-- name: skill name
-- id: SKILL_ID
-- type: skill | mcp-local | mcp-hosted
-- description: one sentence
-- fit: why this skill fits the task
-- rating: X.X avg from N post-use reviews (or 'no reviews yet')
-- version_trust: reviewed | new-version | version-uncertain
-- security: ok | CONCERN: details
-- content_url: URL to fetch the raw skill content
-- version_hash: VERSION_HASH
-- review_key: rv_xxx (from the POST response)
-- suggested_improvements: list any worth applying, or 'none'
-- install_config: (for MCP only) JSON config for .mcp.json
+   If no suitable skill found, send:
+   { action: 'no_match', reason: 'brief explanation' }
 
-If no suitable skill was found, return: NO_MATCH: brief explanation of what was searched and why nothing fit.
-")
-```
+--- APPROVE message ---
+The outer agent sends: { action: 'approve', scope: 'project'|'global', skill_name: '...' }
+Default scope is 'project' — only use 'global' if the outer agent explicitly sends it.
 
-The subagent returns a compact recommendation. All the search results, source
-code, and review text stay in its context — not yours.
+Do ALL of the following:
 
-## Phase 2: Install (you do this directly)
+1. Fetch content from the content_url you found during evaluation.
+2. Apply any suggested improvements you identified.
+3. Write the file to disk:
+   - Project-local skill: mkdir -p .claude/skills/SKILL_NAME, then Write the SKILL.md
+   - Global skill (only if explicitly requested): mkdir -p ~/.claude/skills/SKILL_NAME, then Write the SKILL.md
+   - MCP server (project): Read .mcp.json (or start with {}), add entry under mcpServers, Write back
+   - MCP server (global): same but ~/.mcp.json
+   - MCP servers additionally: append a brief note to .claude/CLAUDE.md describing
+     the MCP server and how to use it (e.g. 'MCP server "X" installed — provides
+     Y tool. Restart Claude Code to activate.'). This survives compaction since
+     CLAUDE.md is always loaded. Read the existing CLAUDE.md first and append —
+     do not overwrite.
+4. Update manifest at ~/.claude/clarmory/installed.json:
+   - mkdir -p ~/.claude/clarmory
+   - Read existing file or start with {installed: []}
+   - If skill already has an entry, move it to history array
+   - Append new entry: {id, name, source, source_url, version_hash, installed_at, scope, path, review_key, modifications, history}
+   - Write back
+5. Send confirmation via SendMessage:
+   {
+     action: 'installed',
+     name: 'skill name',
+     path: 'where it was written',
+     content_summary: 'One sentence: what the skill does. Do NOT reproduce the full skill content — the framework loads it from disk.',
+     modifications: ['list of changes applied'] or [],
+     is_mcp: true/false
+   }
 
-### Present to the user
+--- DECLINE message ---
+The outer agent sends: { action: 'decline', reason: '...' }
 
-Using the recommendation from the subagent, tell the user:
-
-1. **What the skill does** — from the description
-2. **Why it fits the current task** — from the fit rationale
-3. **Review data** — rating and review count
-4. **Version trust** — reviewed, new version, or version-uncertain.
-   If version-uncertain, tell the user the version cannot be verified (e.g.
-   hosted MCP server with opaque backing code) and reviews may not reflect
-   current behavior.
-5. **Security** — ok or concerns from the subagent's assessment
-6. **Recommended scope** — project-local or global, and why
-
-Then ask: "Should I install this?"
-
-### If the user confirms — install
-
-#### Skills (SKILL.md files)
-
-Fetch the content from the `content_url` in the recommendation, apply any
-suggested improvements, then write the file.
-
-**Project-local** (for skills relevant to this specific codebase):
-
-1. Fetch: `WebFetch("CONTENT_URL")`
-2. Apply any suggested improvements from the recommendation
-3. Create directory: `Bash("mkdir -p .claude/skills/SKILL_NAME")`
-4. Write file: `Write(".claude/skills/SKILL_NAME/SKILL.md", content)`
-5. Ask the user if they'd like to commit the skill file to git so collaborators
-   get it automatically. This is a shared-state action — don't commit silently.
-
-**Global** (for general-purpose skills the user wants everywhere):
-
-1. Fetch: `WebFetch("CONTENT_URL")`
-2. Apply any suggested improvements from the recommendation
-3. Create directory: `Bash("mkdir -p ~/.claude/skills/SKILL_NAME")`
-4. Write file: `Write("~/.claude/skills/SKILL_NAME/SKILL.md", content)`
-
-After writing the file, you have the content in context — follow the skill's
-instructions immediately. The file on disk is for future sessions.
-
-#### MCP servers
-
-Read the existing `.mcp.json` (or `~/.mcp.json` for global) or start with `{}`.
-Add the server entry from `install_config` in the recommendation under
-`mcpServers`, and write it back.
-
-```json
-{
-  "mcpServers": {
-    "server-name": {
-      "command": "npx",
-      "args": ["-y", "@scope/mcp-server"],
-      "env": {}
-    }
-  }
-}
-```
-
-**Important**: Unlike skills, MCP servers require Claude Code to restart before
-they become available. Tell the user they need to restart their session to use
-the new server. You cannot use it in the current session.
-
-### Update the manifest
-
-After installation, record what was installed:
-
-```bash
-mkdir -p ~/.claude/clarmory
-```
-
-Read `~/.claude/clarmory/installed.json` (or start with `{"installed": []}`).
-Append an entry:
-
-```json
-{
-  "installed": [
-    {
-      "id": "SKILL_ID",
-      "name": "SKILL_NAME",
-      "source": "awesome-claude-code",
-      "source_url": "https://github.com/user/repo/...",
-      "version_hash": "a1b2c3d4",
-      "installed_at": "2026-04-02T14:30:00Z",
-      "scope": "project",
-      "path": ".claude/skills/mqtt-client/SKILL.md",
-      "review_key": "rv_abc123",
-      "modifications": ["Added reconnection logic per reviewer suggestions"],
-      "history": []
-    }
-  ]
-}
-```
-
-Write the updated manifest back. If reinstalling a skill that already has an
-entry, move the existing entry into `history` before overwriting (enables
-rollback).
-
-### If the user declines
-
-Spawn a brief subagent to record the decline:
-
-```
-Agent("Update Clarmory review REVIEW_KEY with a decline.
-
+Submit decline review stage, then confirm:
 WebFetch('{{CLARMORY_API_URL}}/reviews/REVIEW_KEY', {
   method: 'PATCH',
   headers: {'Content-Type': 'application/json'},
-  body: {
-    stage: 'user_decision',
-    installed: false,
-    decline_reason: 'REASON or empty string'
-  }
+  body: { stage: 'user_decision', installed: false, decline_reason: 'REASON' }
 })
+Send: { action: 'declined', review_key: 'rv_xxx' }
 
-Return: done
-")
-```
+--- REVIEW message ---
+The outer agent sends: {
+  action: 'review',
+  review_key: 'rv_xxx',
+  worked: true/false,
+  rating: 1-5,
+  task_summary: '...',
+  what_worked: '...',
+  what_didnt: '...',
+  suggested_improvements: '...'
+}
 
-## Phase 3: Post-Use Review (subagent)
-
-After using the installed skill for your task, spawn a subagent to submit the
-post-use review. This is the most valuable review stage — it reflects real
-usage, not just code inspection.
-
-```
-Agent("Submit a Clarmory post-use review.
-
+Submit post-use review:
 WebFetch('{{CLARMORY_API_URL}}/reviews/REVIEW_KEY', {
   method: 'PATCH',
   headers: {'Content-Type': 'application/json'},
-  body: {
-    stage: 'post_use',
-    worked: true/false,
-    rating: 1-5,
-    task_summary: 'What I used it for',
-    what_worked: 'Specific things that went well',
-    what_didnt: 'Specific problems encountered',
-    suggested_improvements: 'Actionable guidance, not diffs'
-  }
+  body: { stage: 'post_use', worked, rating, task_summary, what_worked, what_didnt, suggested_improvements }
 })
 
 Rating guide: 1 = broken/harmful, 3 = functional with issues, 5 = excellent.
-Write suggested_improvements as natural-language instructions that make sense
-even if the code changes between versions.
+If you don't have the review_key (outer agent lost it), create a new review with POST /reviews instead.
 
-Return: done
-")
+Send: { action: 'reviewed' }
+"
+})
 ```
 
-If you don't have the review key (different session), the subagent should create
-a new review with `POST /reviews` instead of patching. Fresh perspectives from
-different sessions are independently valuable.
+## Step 2: Send a Search Request
+
+Once the subagent is running, send it a search request:
+
+```
+SendMessage({
+  to: "clarmory",
+  message: { action: "search", query: "WHAT_YOU_NEED" }
+})
+```
+
+Optionally include `type: "skill"` or `type: "mcp"` to filter.
+
+The subagent will search, evaluate candidates, submit a code review, and send
+back a recommendation (or `no_match`). All search noise stays in its context.
+
+## Step 3: Present to the User
+
+When you receive the recommendation, tell the user:
+
+1. **What the skill does** — from `description`
+2. **Why it fits the current task** — from `fit`
+3. **Review data** — `rating`
+4. **Version trust** — `version_trust`. If `version-uncertain`, tell the user
+   the version cannot be verified (e.g. hosted MCP server with opaque backing
+   code) and reviews may not reflect current behavior.
+5. **Security** — `security` field. Surface any concerns prominently.
+
+**Always recommend project-local install** (`.claude/skills/`) unless the user
+explicitly asks for global. Project-local skills survive context compaction
+because they're loaded by the Claude Code framework from disk, not held in
+conversation history. Global skills (`~/.claude/skills/`) may not survive
+compaction in the current session.
+
+Then ask: "Should I install this?"
+
+## Step 4: Send Decision
+
+**If the user approves:**
+
+```
+SendMessage({
+  to: "clarmory",
+  message: { action: "approve", scope: "project", skill_name: "SKILL_NAME" }
+})
+```
+
+Use `scope: "project"` (the default) unless the user explicitly asks for global.
+Project-local skills survive context compaction because the Claude Code framework
+loads them from disk automatically.
+
+The subagent fetches the content, applies improvements, writes the file, updates
+the manifest, and sends back an `installed` confirmation.
+
+**If the user declines:**
+
+```
+SendMessage({
+  to: "clarmory",
+  message: { action: "decline", reason: "User's reason or empty string" }
+})
+```
+
+The subagent submits the decline review stage and confirms.
+
+## Step 5: Use the Skill
+
+Once you receive the `installed` confirmation, the skill is ready:
+
+- **Project-local skills** (`.claude/skills/`): Auto-detected mid-session by
+  Claude Code via live change detection. The framework loads the skill from disk,
+  so it survives context compaction — even in very long sessions, the skill
+  remains available without being held in conversation history.
+- **Global skills** (`~/.claude/skills/`): May need a session restart or direct
+  invocation via `/<skill-name>`. Does not reliably survive compaction in the
+  current session. This is why project-local is the strong default.
+- **MCP servers**: Require a Claude Code restart. Tell the user they need to
+  restart their session to use the new server. The subagent writes a note to
+  `.claude/CLAUDE.md` describing the server — this survives compaction since
+  CLAUDE.md is always loaded, so after restart the agent knows the server
+  exists even if conversation history was compacted.
+
+## Step 6: Send Post-Use Review
+
+After using the skill for your task, send review feedback to the same subagent
+(if still alive):
+
+```
+SendMessage({
+  to: "clarmory",
+  message: {
+    action: "review",
+    review_key: "rv_xxx",
+    worked: true,
+    rating: 4,
+    task_summary: "What I used it for",
+    what_worked: "Specific things that went well",
+    what_didnt: "Specific problems encountered",
+    suggested_improvements: "Actionable guidance, not diffs"
+  }
+})
+```
+
+The subagent submits the post-use review. This is the most valuable review
+stage — it reflects real usage, not just code inspection.
+
+If the subagent is no longer alive (long-running session, context expired),
+spawn a new one with the same prompt and send the review message. The new
+subagent will create a fresh review via `POST /reviews` — fresh perspectives
+from different contexts are independently valuable.
 
 ## Flow Summary
 
-1. **Spawn search subagent** — searches, evaluates, submits code review, returns compact recommendation
-2. **Present to user** — recommendation + "should I install?"
-3. **Install or record decline** — fetch content, write files, update manifest (or spawn decline subagent)
-4. **Use the skill** — follow instructions immediately from what you just wrote
-5. **Spawn review subagent** — submits post-use review with results
+1. **Spawn** persistent Clarmory subagent in background
+2. **Send search** — subagent searches, evaluates, submits code review, sends recommendation
+3. **Present to user** — recommendation + "should I install?"
+4. **Send decision** — approve (subagent installs, sends confirmation) or decline (subagent records it)
+5. **Use the skill** — immediately, from install confirmation context
+6. **Send review** — subagent submits post-use review with your feedback
 
-Not every interaction completes all steps. You might get NO_MATCH from the
-subagent. The user might decline. You might install but not use it this session.
-Partial progress is fine — the code review from step 1 is already submitted.
+Not every interaction completes all steps. You might get `no_match`. The user
+might decline. You might install but not use it this session. Partial progress
+is fine — the code review from step 2 is already submitted.

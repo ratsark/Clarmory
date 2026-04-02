@@ -1,3 +1,6 @@
+import schemaSQL from "../schema.sql";
+import seedSQL from "../scripts/seed.sql";
+
 export interface Env {
   DB: D1Database;
 }
@@ -71,6 +74,50 @@ function logRequest(
   if (requestLog.length > MAX_LOG_ENTRIES) {
     requestLog.splice(0, requestLog.length - MAX_LOG_ENTRIES);
   }
+}
+
+// --- SQL helpers ---
+
+// Split SQL into individual statements, handling comments, string literals,
+// and BEGIN...END trigger blocks with embedded semicolons.
+function splitStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inString = false;
+  let beginDepth = 0;
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+
+    if (ch === "'" && !inString) { inString = true; current += ch; continue; }
+    if (ch === "'" && inString) {
+      current += ch;
+      if (sql[i + 1] === "'") { current += "'"; i++; } else { inString = false; }
+      continue;
+    }
+    if (!inString && ch === "-" && sql[i + 1] === "-") {
+      const eol = sql.indexOf("\n", i);
+      i = eol === -1 ? sql.length : eol;
+      current += " ";
+      continue;
+    }
+    if (!inString) {
+      const upper = sql.substring(i, i + 6).toUpperCase();
+      if (upper.startsWith("BEGIN") && /\s/.test(sql[i + 5] || "")) beginDepth++;
+      const endStr = sql.substring(i, i + 4).toUpperCase();
+      if (endStr === "END" && beginDepth > 0 && /[\s;]/.test(sql[i + 3] || "")) beginDepth--;
+    }
+    if (!inString && beginDepth === 0 && ch === ";") {
+      const trimmed = current.trim();
+      if (trimmed) statements.push(trimmed);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  const trimmed = current.trim();
+  if (trimmed) statements.push(trimmed);
+  return statements;
 }
 
 // --- Helpers ---
@@ -563,6 +610,38 @@ export default {
     if (url.pathname === "/admin/clear-requests" && request.method === "POST") {
       requestLog.length = 0;
       return json({ cleared: true });
+    }
+
+    // Admin: seed database (drop + recreate + seed)
+    if (url.pathname === "/admin/seed" && request.method === "POST") {
+      try {
+        // Drop existing tables/views/triggers in reverse dependency order
+        await env.DB.exec("DROP VIEW IF EXISTS review_stats");
+        await env.DB.exec("DROP TRIGGER IF EXISTS skills_ai");
+        await env.DB.exec("DROP TRIGGER IF EXISTS skills_ad");
+        await env.DB.exec("DROP TRIGGER IF EXISTS skills_au");
+        await env.DB.exec("DROP TABLE IF EXISTS skills_fts");
+        await env.DB.exec("DROP TABLE IF EXISTS reviews");
+        await env.DB.exec("DROP TABLE IF EXISTS skills");
+
+        // Apply schema and seed
+        const allSQL = schemaSQL + "\n" + seedSQL;
+        const stmts = splitStatements(allSQL);
+        for (const stmt of stmts) {
+          await env.DB.prepare(stmt).run();
+        }
+
+        // Clear request log too for a clean test slate
+        requestLog.length = 0;
+
+        return json({
+          seeded: true,
+          statements: stmts.length,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        return json({ seeded: false, error: message }, 500);
+      }
     }
 
     const match = matchRoute(request.method, url.pathname, routes);

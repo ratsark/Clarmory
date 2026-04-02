@@ -542,7 +542,7 @@ describe("review stats", () => {
 describe("GET /admin/recent-requests", () => {
   it("returns logged requests", async () => {
     // Make a request that gets logged
-    await callWorker("/search?q=test-logging");
+    await callWorker("/search?q=security");
 
     const { status, body } = await jsonResponse<{
       count: number;
@@ -559,7 +559,7 @@ describe("GET /admin/recent-requests", () => {
     expect(status).toBe(200);
     expect(body.count).toBeGreaterThan(0);
     const searchReq = body.requests.find(
-      (r) => r.path === "/search" && r.query.q === "test-logging"
+      (r) => r.path === "/search" && r.query.q === "security"
     );
     expect(searchReq).toBeDefined();
     expect(searchReq!.method).toBe("GET");
@@ -585,6 +585,27 @@ describe("GET /admin/recent-requests", () => {
       "/admin/recent-requests"
     );
     expect(body.count).toBe(0);
+  });
+});
+
+// --- Admin: seed database ---
+
+describe("POST /admin/seed", () => {
+  it("reseeds the database and returns success", async () => {
+    const { status, body } = await jsonResponse<{
+      seeded: boolean;
+      statements: number;
+    }>("/admin/seed", { method: "POST" });
+
+    expect(status).toBe(200);
+    expect(body.seeded).toBe(true);
+    expect(body.statements).toBeGreaterThan(0);
+
+    // Verify data is present after reseed
+    const { body: searchBody } = await jsonResponse<{
+      results: Array<{ id: string }>;
+    }>("/search?q=mqtt");
+    expect(searchBody.results.length).toBeGreaterThan(0);
   });
 });
 
