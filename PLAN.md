@@ -180,6 +180,11 @@ Implement the cron-based upstream registry sync.
 
 - [ ] Adapter interface for upstream sources
 - [ ] First adapter (likely awesome-claude-code or a curated GitHub list)
+- [ ] Microsoft APM adapter — APM (github.com/microsoft/apm) is a complementary
+      package manager for agent configs (skills, MCP servers, prompts, hooks).
+      Distributed git-based model, no central registry API. Index APM-compatible
+      packages by scanning repos with apm.yml manifests. APM handles dependency
+      management; Clarmory adds the review/quality layer APM lacks.
 - [ ] Version change detection (content hash comparison)
 - [ ] Cron trigger configuration
 - [ ] Grow to ~100 indexed skills
@@ -192,6 +197,8 @@ Implement the cron-based upstream registry sync.
 - "Also found in" cross-registry linking
 - Synthesized cross-session reviews (requires persistent agent identity)
 - Skill publishing (authors submit to Clarmory directly)
+- Deeper APM integration (output apm.yml entries alongside Clarmory manifest,
+  support `apm install` as alternative install path)
 
 ## Decisions Log
 

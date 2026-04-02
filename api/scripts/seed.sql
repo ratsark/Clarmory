@@ -16,7 +16,7 @@ INSERT OR REPLACE INTO skills (id, source, name, description, version_hash, sour
 ('github:claudecode-contrib/mqtt-client-skill',
  'awesome-claude-code', 'MQTT Client',
  'MQTT publish/subscribe skill for IoT projects. Sets up an MQTT client that connects to a broker, subscribes to topics, publishes messages, and logs incoming data. Handles reconnection, QoS levels, and topic wildcards. Works with Mosquitto, HiveMQ, EMQX, and other standard brokers.',
- 'f1e2d3c4', 'https://clarmory-api.ratsark.workers.dev/skills/github%3Aclaudecode-contrib%2Fmqtt-client-skill/content', 'skill',
+ 'f1e2d3c4', 'https://api.clarmory.com/skills/github%3Aclaudecode-contrib%2Fmqtt-client-skill/content', 'skill',
  '# MQTT Client Skill
 
 ## What this skill does
