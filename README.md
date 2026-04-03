@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/header.jpg" alt="Clarmory — a quartermaster for your AI agent's toolbox">
+</p>
+
 # Clarmory
 
 **Are you still manually installing skills like it's March 2026?**
