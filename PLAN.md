@@ -165,8 +165,9 @@ details.
 
 Implement tiered trust auth and populate the DB with real content.
 
-- [x] Import real skills from upstream sources: 203 skills in production
-      (awesome-claude-code + GitHub SKILL.md search)
+- [x] Import real skills from upstream sources: ~2,700 skills in production
+      (awesome-claude-code, GitHub SKILL.md search, GitHub topic search,
+      npm registry, Smithery.ai, official MCP servers repo)
 - [ ] Tier 1 auth: Ed25519 keypair — agent auto-generates, signs reviews,
       server tracks consistent pseudonymous identity. Zero friction.
 - [ ] Tier 2 auth: GitHub OAuth device flow — optional trust upgrade,
@@ -289,3 +290,8 @@ Implement the cron-based upstream registry sync (replaces manual import script).
   (discovery + quality). Added to Phase 6 as upstream adapter target.
 - 2026-04-02: 203 skills imported to production DB from awesome-claude-code and
   GitHub SKILL.md search. Production live at api.clarmory.com.
+- 2026-04-02: Expanded to ~2,700 skills from 6 sources: npm registry (970 MCP
+  packages), Smithery.ai (463 servers), GitHub topics (311 repos), official
+  MCP servers repo (6 individual servers), plus existing sources. PulseMCP
+  skipped (requires API key, heavy overlap with Smithery/npm). Import script
+  at api/scripts/import-new-sources.py with batched wrangler inserts.

@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS skills (
   install_type TEXT NOT NULL DEFAULT 'skill',  -- skill | mcp-local | mcp-hosted
   content TEXT,                      -- optional inline skill content (for self-contained skills without upstream)
   tags TEXT DEFAULT '',             -- space-separated tags for FTS (extracted from metadata)
+  install_instructions TEXT,        -- how to install (e.g. "npm install", "pip install", config steps)
+  dependencies TEXT,                -- what it requires (e.g. "node 18+, npm" or "python 3.10+, pip")
   metadata TEXT DEFAULT '{}',       -- JSON blob for source-specific extras
+  enriched_at TEXT,                 -- when metadata was last enriched from source
   indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
