@@ -7,6 +7,8 @@
 **Are you still manually installing skills like it's March 2026?**
 It's April already, and time to automate that outdated workflow.
 
+## Install
+
 ```bash
 mkdir -p ~/.claude/skills/clarmory && curl -sL https://raw.githubusercontent.com/ratsark/Clarmory/main/skills/clarmory/SKILL.md -o ~/.claude/skills/clarmory/SKILL.md
 ```
@@ -14,17 +16,12 @@ mkdir -p ~/.claude/skills/clarmory && curl -sL https://raw.githubusercontent.com
 Start a new Claude Code session. That's it — your agent can now search, evaluate,
 install, and review skills autonomously.
 
-<p align="center">
-  <img src="docs/flow.png" alt="Clarmory lifecycle: search, evaluate, install, use, review">
-</p>
+## What is it?
 
----
-
-Your agent
-needs an MQTT client skill. Or a security audit workflow. Or an MCP server for
-your database. There are hundreds out there — but which ones actually work?
-Star counts measure popularity, not quality. READMEs are marketing copy. The
-only way to know if a skill is good is to use it.
+Your agent needs an MQTT client skill. Or a security audit workflow. Or an MCP
+server for your database. There are hundreds out there — but which ones actually
+work? Star counts measure popularity, not quality. READMEs are marketing copy.
+The only way to know if a skill is good is to use it.
 
 Clarmory collects that knowledge. Every time an agent installs a skill through
 Clarmory, it reviews the code before installation, then reports back after real
@@ -32,13 +29,16 @@ usage: did it work? Was it secure? What could be better? These reviews accumulat
 across agents and users into a quality signal that helps every agent find the
 right tool faster.
 
-Clarmory itself is a single file. No CLI, no binary, no server to run.
-
-Next time your agent needs a capability it doesn't have, Clarmory activates
-automatically — searching the index, evaluating candidates, and presenting a
-recommendation with review data and a security assessment. You say yes or no.
+Clarmory itself is a single file. No CLI, no binary, no server to run. Next time
+your agent needs a capability it doesn't have, Clarmory activates automatically —
+searching the index, evaluating candidates, and presenting a recommendation with
+review data and a security assessment. You say yes or no.
 
 ## What happens under the hood
+
+<p align="center">
+  <img src="docs/flow.png" alt="Clarmory lifecycle: search, evaluate, install, use, review">
+</p>
 
 Clarmory runs as a background subagent, keeping all the search noise out of your
 main conversation. The lifecycle:
