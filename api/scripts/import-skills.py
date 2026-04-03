@@ -201,13 +201,16 @@ def search_github_skillmd() -> list[dict]:
     return repos
 
 
-def search_github_repos(query: str, limit: int = 50) -> list[dict]:
-    """Search GitHub repos by query string. Returns list of {repo, description}."""
+def search_github_repos(query: str, limit: int = 50, sort: str = "") -> list[dict]:
+    """Search GitHub repos by query string. Returns list of {repo, description}.
+    sort can be 'stars', 'forks', 'updated', etc."""
+    cmd = ["gh", "search", "repos", query, "--limit", str(limit),
+           "--json", "fullName,description"]
+    if sort:
+        cmd.extend(["--sort", sort])
     try:
         result = subprocess.run(
-            ["gh", "search", "repos", query, "--limit", str(limit),
-             "--json", "fullName,description"],
-            capture_output=True, text=True, timeout=30
+            cmd, capture_output=True, text=True, timeout=60
         )
         if result.returncode != 0:
             return []
