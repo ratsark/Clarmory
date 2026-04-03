@@ -139,8 +139,15 @@ Do ALL of the following, then send back a compact recommendation:
    Results include:
    - reviews: {total, code_reviews, installs, declines, post_use, avg_rating, verified_count, verified_avg_rating, security_flags}
    - version_info: {current_hash, previous_hash, reviews_for_current, is_new_version, version_uncertain}
-   Pick the best candidate. Prefer skills with post_use reviews. When verified_count >= 5,
-   prefer verified_avg_rating over avg_rating. Flag security_flags > 0.
+   Pick the best candidate. Consider these signals in order:
+   - **Source credibility**: 'anthropic' = official Anthropic repo (highest trust).
+     'awesome-claude-code' = primary curated list (high trust). 'github' = found
+     via GitHub search (verify quality yourself). 'awesome-list:*' = community
+     curated list (moderate trust). 'npm' = npm registry (verify quality).
+   - **Reviews**: Prefer skills with post_use reviews over code-review-only.
+     When verified_count >= 5, prefer verified_avg_rating over avg_rating.
+   - **Security flags**: Flag security_flags > 0 for extra scrutiny.
+   In absence of reviews, source credibility is the strongest quality signal.
 
 2. EVALUATE:
    Fetch details: WebFetch('https://api.clarmory.com/skills/' + encodeURIComponent(SKILL_ID))
@@ -190,6 +197,7 @@ Do ALL of the following, then send back a compact recommendation:
      name: 'skill name',
      id: 'SKILL_ID',
      type: 'skill' | 'mcp-local' | 'mcp-hosted',
+     source: 'source name (e.g. anthropic, awesome-claude-code, github)',
      description: 'one sentence',
      fit: 'why this skill fits the task',
      adds_value: 'what this provides beyond built-in tools (e.g. domain knowledge, external integration, non-obvious workflow)',
