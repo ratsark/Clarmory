@@ -504,7 +504,15 @@ const searchSkills: RouteHandler = async (request, env) => {
     20
   );
 
-  if (!query.trim()) {
+  // Sanitize query for FTS5: strip special characters that act as operators,
+  // and remove FTS5 keywords (AND, OR, NOT, NEAR) that would be parsed as operators
+  const ftsOperators = /\b(AND|OR|NOT|NEAR)\b/gi;
+  const sanitized = query
+    .replace(/[^\w\s]/g, " ")   // strip non-alphanumeric (hyphens, dots, parens, etc.)
+    .replace(ftsOperators, " ")  // strip FTS5 boolean operators
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!sanitized) {
     return json({ error: "Query parameter 'q' is required" }, 400);
   }
 
@@ -585,10 +593,10 @@ const searchSkills: RouteHandler = async (request, env) => {
 
   // Run all queries in a batch
   const [relevant, rated, used, rising] = await env.DB.batch([
-    env.DB.prepare(relevantQuery).bind(query, ...typeBinds, limit),
-    env.DB.prepare(ratedQuery).bind(query, ...typeBinds, limit),
-    env.DB.prepare(usedQuery).bind(query, ...typeBinds, limit),
-    env.DB.prepare(risingQuery).bind(query, ...typeBinds, limit),
+    env.DB.prepare(relevantQuery).bind(sanitized, ...typeBinds, limit),
+    env.DB.prepare(ratedQuery).bind(sanitized, ...typeBinds, limit),
+    env.DB.prepare(usedQuery).bind(sanitized, ...typeBinds, limit),
+    env.DB.prepare(risingQuery).bind(sanitized, ...typeBinds, limit),
   ]);
 
   // Deduplicate: first occurrence wins (preserves the most useful inclusion_reason)

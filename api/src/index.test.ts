@@ -282,6 +282,35 @@ describe("GET /search", () => {
       expect(claudeMcp.version_info.version_uncertain).toBe(true);
     }
   });
+
+  it("handles hyphens in query without 500 error", async () => {
+    const { status, body } = await jsonResponse<{ results: SearchResult[] }>(
+      "/search?q=mcp-server"
+    );
+    expect(status).toBe(200);
+    expect(body.results).toBeInstanceOf(Array);
+  });
+
+  it("handles dots and parentheses in query without 500 error", async () => {
+    const { status, body } = await jsonResponse<{ results: SearchResult[] }>(
+      "/search?q=node.js+(express)"
+    );
+    expect(status).toBe(200);
+    expect(body.results).toBeInstanceOf(Array);
+  });
+
+  it("handles query with only special characters", async () => {
+    const { status } = await jsonResponse("/search?q=---...(())");
+    expect(status).toBe(400);
+  });
+
+  it("handles FTS5 operator keywords in query", async () => {
+    const { status, body } = await jsonResponse<{ results: SearchResult[] }>(
+      "/search?q=NOT+OR+AND+security"
+    );
+    expect(status).toBe(200);
+    expect(body.results).toBeInstanceOf(Array);
+  });
 });
 
 // --- Get Skill ---

@@ -245,16 +245,18 @@ def search_github_claude_skills() -> list[dict]:
 
 
 def search_github_mcp_servers() -> list[dict]:
-    """Search GitHub for MCP server repos."""
+    """Search GitHub for MCP server repos, sorted by stars for quality."""
     search_terms = [
-        "mcp-server in:name",
-        "modelcontextprotocol in:name",
-        "mcp server claude in:description",
+        ("mcp-server in:name", 100),
+        ("modelcontextprotocol in:name", 50),
+        ("mcp server in:description", 80),
+        ("model context protocol server in:description", 50),
+        ("mcp-server- in:name", 50),          # catches mcp-server-* repos
     ]
     seen = set()
     results = []
-    for term in search_terms:
-        repos = search_github_repos(term, limit=50)
+    for term, limit in search_terms:
+        repos = search_github_repos(term, limit=limit, sort="stars")
         for repo in repos:
             name = repo.get("fullName", "")
             if not name or name in seen:
@@ -315,6 +317,31 @@ def search_other_awesome_lists() -> list[dict]:
             readme_repos.append(name)
         time.sleep(1)
     return readme_repos
+
+
+def search_anthropic_repos() -> list[dict]:
+    """Fetch repos from the anthropics GitHub org for skills/MCP servers."""
+    results = []
+    try:
+        result = subprocess.run(
+            ["gh", "api", "orgs/anthropics/repos", "--paginate",
+             "-q", '.[] | {fullName: .full_name, description: .description}'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return []
+        # Output is newline-delimited JSON objects
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                repo = json.loads(line)
+                results.append(repo)
+            except json.JSONDecodeError:
+                continue
+    except subprocess.TimeoutExpired:
+        pass
+    return results
 
 
 def insert_via_wrangler(skill: dict, tmpdir: str) -> bool:
@@ -581,6 +608,52 @@ def main():
             time.sleep(1)
 
         print(f"  Added {added_6} new skills from other lists")
+
+        # --- Source 7: Anthropic official repos ---
+        print()
+        print("=== Source: Anthropic official repos ===")
+        anthropic_repos = search_anthropic_repos()
+        print(f"  Found {len(anthropic_repos)} repos in anthropics org")
+        added_7 = 0
+
+        for repo_info in anthropic_repos:
+            repo = repo_info.get("fullName", "")
+            if not repo:
+                continue
+            skill_id = f"github:{repo}"
+            if skill_id in seen_ids:
+                continue
+            seen_ids.add(skill_id)
+
+            description = repo_info.get("description") or ""
+            if not description:
+                description = f"Official Anthropic tool from {repo}"
+
+            name = repo.split("/")[1]
+            name = re.sub(r'[-_]', ' ', name).title()
+
+            # Classify: MCP servers vs skills vs skip
+            name_lower = name.lower()
+            desc_lower = description.lower()
+            if "mcp" in name_lower or "mcp" in desc_lower:
+                install_type = "mcp-local"
+            elif any(w in desc_lower for w in ["sdk", "library", "client"]):
+                install_type = "skill"
+            else:
+                install_type = "skill"
+
+            all_skills.append({
+                "id": skill_id,
+                "source": "anthropic",
+                "name": name,
+                "description": description,
+                "source_url": f"https://github.com/{repo}",
+                "install_type": install_type,
+                "author": "anthropics",
+            })
+            added_7 += 1
+
+        print(f"  Added {added_7} new Anthropic repos")
 
         print()
         print(f"=== Total unique skills: {len(all_skills)} ===")
