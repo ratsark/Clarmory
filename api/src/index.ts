@@ -435,6 +435,18 @@ interface SkillRow {
   indexed_at: string;
 }
 
+// Compute source trust tier from source field
+function sourceTier(source: string): "curated" | "verified" | "discovered" {
+  if (source === "anthropic") return "curated";
+  if (source === "awesome-claude-code") return "curated";
+  if (source.startsWith("awesome-list:")) return "curated";
+  if (source === "mcp-registry") return "verified";
+  if (source === "npm") return "verified";
+  if (source === "smithery") return "verified";
+  if (source === "official-mcp") return "verified";
+  return "discovered";
+}
+
 // Build the reviews summary object the SKILL.md expects
 function buildReviewsSummary(stats: ReviewStatsRow | null) {
   if (!stats) {
@@ -644,6 +656,7 @@ const searchSkills: RouteHandler = async (request, env) => {
       name: skill.name,
       description: skill.description,
       source: skill.source,
+      source_tier: sourceTier(skill.source),
       source_url: skill.source_url,
       type: skill.install_type,
       version_hash: skill.version_hash,
@@ -685,6 +698,7 @@ const getSkill: RouteHandler = async (_request, env, params) => {
     name: skill.name,
     description: skill.description,
     source: skill.source,
+    source_tier: sourceTier(skill.source),
     source_url: skill.source_url,
     type: skill.install_type,
     version_hash: skill.version_hash,
