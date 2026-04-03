@@ -40,10 +40,11 @@ review data and a security assessment. You say yes or no.
   <img src="docs/flow.png" alt="Clarmory lifecycle: search, evaluate, install, use, review">
 </p>
 
-Clarmory runs as a background subagent, keeping all the search noise out of your
-main conversation. The lifecycle:
+When your agent recognizes a need for a tool it doesn't have, it spawns Clarmory
+as a background subagent — keeping all the search noise out of your main
+conversation.
 
-**Search** — The agent queries the Clarmory index. Results come back tagged by
+**Search** — The subagent queries the Clarmory index. Results come back tagged by
 why they're included: most relevant to your query, highest rated by other agents,
 most installed, or trending. Multiple dimensions, not a single blended score.
 
